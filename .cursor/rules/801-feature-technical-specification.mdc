@@ -1,0 +1,86 @@
+---
+description: USE when CREATING feature technical specifications to ENSURE comprehensive documentation of implementation details
+globs: "**/*.md"
+alwaysApply: false
+---
+
+# Feature Technical Specification Standard
+
+<introduction>
+This reference provides guidance for creating standardized feature technical specifications. It ensures comprehensive documentation of implementation details, interfaces, and considerations for integrating new features into existing codebases.
+</introduction>
+
+<context>
+- Implementing a new feature based on requirements
+- Planning the technical implementation of a feature
+- Documenting changes to existing components
+- Defining integration points for a feature
+- Specifying performance optimizations and error handling
+</context>
+
+<template_structure>
+A feature technical specification should follow this structure:
+
+1. **Introduction** - Purpose and overview of the feature
+2. **Requirements Reference** - Link to originating requirements
+3. **Architectural Context** - How the feature fits into the system
+4. **Implementation Components** - New and modified components
+5. **Configuration** - Parameters, validation, and storage
+6. **Data Flow** - Acquisition, processing, and output
+7. **Implementation Details** - Core logic, performance, error handling
+8. **Integration** - How the feature integrates with existing system
+9. **Testing Strategy** - Approach for testing the feature
+10. **Implementation Phases** - Sequence for implementation
+11. **Constraints** - Technical limitations and boundaries
+12. **References** - Links to relevant documentation
+13. **Examples** - Code examples showing implementation
+14. **Critical Points** - Essential aspects of the implementation
+</template_structure>
+
+<examples>
+<example>
+# Feature Technical Specification: Tool Offset Gathering
+
+<introduction>
+This feature enables the Mitsubishi-Citizen MTConnect adapter to collect, process, and report tool offset data from Mitsubishi M700/M70 series CNC controllers. It provides real-time tool offset information for monitoring and analysis in MTConnect-compatible applications.
+</introduction>
+
+<configuration>
+<parameters>
+| Parameter | Type | Default | Valid Range | Description |
+|-----------|------|---------|-------------|-------------|
+| tool_offset_enabled | boolean | false | true/false | Enables/disables tool offset gathering |
+| max_tool_offsets | integer | 20 | 1-100 | Maximum number of tool offsets to gather |
+</parameters>
+</configuration>
+
+<implementation_details>
+<core_logic>
+- Determine number of available tool offset sets via MEL API
+- Collect tool offset data in batches to maintain performance
+- Convert tool offset values to appropriate units for MTConnect
+</core_logic>
+</implementation_details>
+
+<critical_points>
+- ALWAYS validate configuration parameters before use
+- IMPLEMENT batched collection for performance optimization
+- HANDLE axis-specific data collection through appropriate MEL API calls
+</critical_points>
+</example>
+</examples>
+
+<critical_points>
+- ALWAYS link to the originating requirements document
+- SPECIFY both new components and modifications to existing components
+- DOCUMENT configuration parameters with proper validation rules
+- INCLUDE detailed data flow from acquisition to output
+- HIGHLIGHT performance optimizations for critical operations
+- DEFINE clear integration points with existing systems
+- OUTLINE comprehensive testing strategy including edge cases
+- PROVIDE concrete code examples where appropriate
+- ENSURE all critical implementation considerations are documented
+- SPECIFY implementation phases for complex features
+</critical_points>
+
+The template for this format can be found at: [[.cursor/templates/template-feature-technical-specification.md]]

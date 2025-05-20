@@ -1,0 +1,120 @@
+---
+description: USE simplified JIRA format when CREATING tickets to ENSURE consistency
+globs: **/*.jira.md
+alwaysApply: false
+---
+
+# Simplified JIRA Ticket Format
+
+<introduction>
+This reference documents the simplified format for creating JIRA tickets within this project. It provides a standardized structure for ticket creation that ensures consistency, readability, and focuses on essential information needed for implementation.
+</introduction>
+
+<context>
+- Creating new JIRA tickets for features or bugs
+- Documenting requirements in JIRA-compatible format
+- Converting feature specifications to implementable JIRA tasks
+- Maintaining consistent ticket structure across teams
+</context>
+
+<format_principles>
+- Use plain text format without complex Markdown
+- Include only essential JIRA fields relevant to the task
+- Use consistent list formatting with specific markers
+- Apply clear section headers with standardized separators
+- Maintain minimal but sufficient detail for implementation
+- Follow organizational naming and classification standards
+</format_principles>
+
+<required_fields>
+- JIRA ID and descriptive title on first line
+- Type classification (Bug, Feature, Task, etc.)
+- Priority level (High, Medium, Low)
+- Components affected (comma-separated list)
+- Description section with concise overview
+- Requirements section with bulleted list using asterisks
+- Technical Details section when implementation needs clarification
+- Configuration section for environment-specific settings
+- Acceptance Criteria as bulleted list using hyphens
+- Estimated Time in hours for planning purposes
+</required_fields>
+
+<formatting_standards>
+- Use plain text without fancy formatting
+- Section headers in title case followed by colons
+- Asterisks (*) for requirements list items
+- Hyphens (-) for acceptance criteria items
+- Single blank line between sections
+- No checkboxes, code blocks, or complex Markdown syntax
+- Consistent indentation for all list items
+</formatting_standards>
+
+<warning>
+Inconsistent ticket formatting leads to confusion, missed requirements, and implementation errors. Following the standardized format ensures that all stakeholders have a common understanding of what is being requested and how completion will be verified.
+</warning>
+
+<examples>
+<example>
+MTCNCT-123: Implement Tool Offset Feature
+
+Type: Feature
+Priority: High
+Components: MTConnect Adapter, Integration
+
+Description:
+Implement tool offset feature using MEL API.
+
+Requirements:
+* Create ToolOffset class
+* Integrate with DevicePath class
+* Support multiple tool offsets
+
+Technical Details:
+Use MEL API:
+* SECT_T_OFFSET_NUMBER_OF_SETS for count
+* SECT_T_OFFSET_LENGTH_X/Y/Z for geometry
+
+Acceptance Criteria:
+- Data correctly read from CNC
+- Data exposed through adapter
+- Feature configurable
+
+Estimated Time: 40 hours
+</example>
+
+<example type="alternative">
+MTCNCT-456: Fix Connection Timeout Bug
+
+Type: Bug
+Priority: Critical
+Components: Network, Connection Management
+
+Description:
+Connection to CNC fails with timeout when network latency is high.
+
+Requirements:
+* Increase timeout threshold
+* Add retry logic
+* Log detailed connection errors
+
+Acceptance Criteria:
+- Connection succeeds with up to 500ms latency
+- System automatically retries 3 times before failure
+- Error logs contain sufficient information for diagnosis
+
+Estimated Time: 16 hours
+</example>
+</examples>
+
+<critical_points>
+- NEVER use Markdown headers (# or ## symbols) in ticket content
+- ALWAYS use section names with standard formatting (Name: Content)
+- USE asterisks (*) consistently for requirements list items
+- USE hyphens (-) consistently for acceptance criteria items
+- INCLUDE essential sections (Description, Requirements, Acceptance Criteria)
+- SEPARATE sections with a single blank line for readability
+- OMIT unnecessary fields unless specifically requested
+- MAINTAIN consistent structure across all tickets
+- PROVIDE sufficient technical detail for implementation
+- AVOID overly complex formatting that may break in JIRA
+</critical_points>

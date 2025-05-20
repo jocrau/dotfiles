@@ -1,0 +1,201 @@
+---
+description: APPLY software engineering principles when DESIGNING code to ENSURE maintainable and robust software
+globs: **/*.{cpp,hpp,c,h,js,ts,py}
+alwaysApply: false
+---
+
+# Software Engineering Best Practices
+
+<introduction>
+This reference documents fundamental software engineering principles for creating maintainable and robust code. It provides guidance on architectural decisions, component design, and code organization to promote high-quality software development.
+</introduction>
+
+<context>
+- Designing new components or systems
+- Refactoring existing code
+- Reviewing code for architectural issues
+- Making decisions about code organization
+- Implementing features that require architectural changes
+</context>
+
+<solid_principles>
+- Single Responsibility: Keep components focused on exactly one responsibility
+- Open/Closed: Design for extension without modifying existing code
+- Liskov Substitution: Ensure derived classes can substitute for base classes
+- Interface Segregation: Create small, focused interfaces rather than large ones
+- Dependency Inversion: Depend on abstractions, not concrete implementations
+</solid_principles>
+
+<design_principles>
+- DRY (Don't Repeat Yourself): Avoid code duplication through proper abstraction
+- KISS (Keep It Simple, Stupid): Choose simple solutions over complex ones
+- YAGNI (You Aren't Gonna Need It): Implement only what is currently needed
+- Composition Over Inheritance: Prefer object composition for code reuse
+- Law of Demeter: Limit object knowledge to immediate collaborators
+- Fail Fast: Validate input early and handle errors promptly
+- Separation of Concerns: Divide systems into distinct features with minimal overlap
+</design_principles>
+
+<architectural_considerations>
+- Apply appropriate design patterns for common problems
+- Maintain clear boundaries between system layers
+- Design for testability from the beginning
+- Consider backward compatibility when evolving interfaces
+- Balance flexibility with simplicity in all designs
+- Plan for observability and monitoring in production systems
+- Consider security implications at the design stage
+</architectural_considerations>
+
+<code_organization>
+- Group related functionality in cohesive modules
+- Define clear interfaces between components
+- Minimize global state and side effects
+- Create loosely coupled components that can evolve independently
+- Organize code by feature rather than by type when appropriate
+- Use consistent naming conventions for similar concepts
+</code_organization>
+
+<api_integration_principles>
+- Do Not Redefine API Constants: Never redefine constants or structures from external APIs or libraries
+- Include Original Headers: Always include the original header files from external APIs
+- Document API Dependencies: Clearly document which API versions your code depends on
+- Use Consistent API Access Patterns: Follow established patterns for accessing external APIs
+- Wrap External APIs: Consider creating wrapper interfaces for external APIs to isolate dependency
+- Track API Versioning: Document and track which version of external APIs your code is tested with
+- Handle API Evolution: Design for graceful handling of API changes and versioning
+- Validate API Responses: Always validate return values and responses from external API calls
+- Prepare for API Failures: Include robust error handling for all external API interactions
+- Audit External Dependencies: Regularly review and audit external API usage for consistency
+</api_integration_principles>
+
+<warning>
+Overly complex designs can be as problematic as poorly structured ones. Always strive for the simplest solution that satisfies the requirements while maintaining good engineering principles. The goal is maintainable, robust software, not perfect adherence to any particular dogma or pattern.
+</warning>
+
+<examples>
+<example>
+// Good: Single Responsibility and Dependency Inversion
+class OrderProcessor {
+private:
+  IPaymentGateway& paymentGateway;
+  IInventoryManager& inventoryManager;
+  IOrderRepository& orderRepository;
+
+public:
+  OrderProcessor(
+    IPaymentGateway& paymentGateway,
+    IInventoryManager& inventoryManager,
+    IOrderRepository& orderRepository
+  ) : paymentGateway(paymentGateway),
+      inventoryManager(inventoryManager),
+      orderRepository(orderRepository) {}
+
+  Result processOrder(const Order& order) {
+    // Each step delegated to specialized components
+    if (!inventoryManager.checkAvailability(order.items)) {
+      return Result::OutOfStock;
+    }
+
+    PaymentResult paymentResult = paymentGateway.processPayment(order.payment);
+    if (!paymentResult.success) {
+      return Result::PaymentFailed;
+    }
+
+    inventoryManager.updateInventory(order.items);
+    orderRepository.save(order);
+    return Result::Success;
+  }
+};
+</example>
+
+<example type="alternative">
+// Composition over Inheritance and Interface Segregation
+class ReportGenerator {
+private:
+  IDataSource& dataSource;
+  IFormatter& formatter;
+  IOutputWriter& writer;
+
+public:
+  ReportGenerator(
+    IDataSource& dataSource,
+    IFormatter& formatter,
+    IOutputWriter& writer
+  ) : dataSource(dataSource),
+      formatter(formatter),
+      writer(writer) {}
+
+  void generateReport() {
+    auto data = dataSource.getData();
+    auto formattedReport = formatter.format(data);
+    writer.write(formattedReport);
+  }
+};
+
+// Small, focused interfaces
+class IDataSource {
+public:
+  virtual Data getData() = 0;
+  virtual ~IDataSource() = default;
+};
+
+class IFormatter {
+public:
+  virtual FormattedContent format(const Data& data) = 0;
+  virtual ~IFormatter() = default;
+};
+
+class IOutputWriter {
+public:
+  virtual void write(const FormattedContent& content) = 0;
+  virtual ~IOutputWriter() = default;
+};
+</example>
+
+<example type="api_integration">
+// Good: Using API constants from original headers
+#include "external_api_header.h"
+
+void processData() {
+  // Use constants defined in the external API
+  if (apiFunction() == API_SUCCESS_CODE) {
+    // Process success case
+  }
+}
+
+// Bad: Redefining API constants
+// #define API_SUCCESS_CODE 0  // DON'T DO THIS!
+
+void incorrectProcessing() {
+  // Using redefined constants creates maintenance problems
+  if (apiFunction() == API_SUCCESS_CODE) {
+    // This could break if the API changes
+  }
+}
+</example>
+</examples>
+
+<critical_points>
+- ALWAYS separate concerns into focused components
+- NEVER mix multiple responsibilities in a single class
+- ALWAYS depend on abstractions, not implementation details
+- ALWAYS design for extension without modification
+- PREFER composition over inheritance
+- KEEP interfaces small and focused
+- AVOID duplication through proper abstraction
+- IMPLEMENT only what is currently needed (YAGNI)
+- CHOOSE simple solutions over complex ones (KISS)
+- APPLY appropriate design patterns for recurring problems
+- VALIDATE inputs at system boundaries
+- MAINTAIN clear separation between layers
+- DESIGN components to be independently testable
+- CONSIDER error handling as part of the design
+- DOCUMENT architectural decisions and their rationale
+- NEVER redefine constants or structures from external APIs
+- ALWAYS include the original header files that define API constants
+- FOLLOW established patterns for external API access
+- DOCUMENT all dependencies on external API versions
+- ISOLATE external API dependencies through wrapper interfaces
+- VALIDATE all return values from external API calls
+- IMPLEMENT robust error handling for API failures
+</critical_points>

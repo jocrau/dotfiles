@@ -1,0 +1,127 @@
+---
+description: ALWAYS use when writing or updating Markdown files to ensure consistent formatting and readability
+globs: **/*.md
+alwaysApply: false
+---
+
+# Markdown Documentation Standards
+
+<introduction>
+This reference documents the standards for creating and maintaining Markdown documentation within this project. It provides guidance on structure, formatting, and specialized elements to ensure consistency and readability across all documentation.
+</introduction>
+
+<context>
+- Creating or modifying any Markdown documentation
+- Establishing documentation structure and style
+- Including diagrams, code blocks, or special elements
+- Maintaining consistent formatting across documentation
+- Converting documentation from other formats to Markdown
+</context>
+
+<heading_standards>
+- Use ATX-style headings with space after hash: `# Heading`
+- Start documents with a single level-1 heading (`#`)
+- Maintain proper heading hierarchy (don't skip levels)
+- Limit heading depth to 4 levels maximum
+- Add blank line before and after headings
+- Use sentence case for headings (capitalize first word and proper nouns)
+</heading_standards>
+
+<content_formatting>
+- Separate paragraphs with a single blank line
+- Use list markers consistently (either `-` or `*` for unordered)
+- Add blank lines before and after code blocks and tables
+- Keep line length reasonable (aim for 80-100 characters)
+- Use bold and italic formatting sparingly for emphasis
+- Employ blockquotes with emoji for callouts and notes
+- Indent content within XML tags by 2 spaces
+</content_formatting>
+
+<code_standards>
+- Specify language in code blocks using triple backticks
+- Format code according to language-specific conventions
+- Use inline code formatting for code references in text
+- Add proper descriptions or captions for code samples
+- Include comments in code when helpful for explanation
+</code_standards>
+
+<table_formatting>
+- Include header row with column names
+- Use alignment indicators (`:---:`) for proper alignment
+- Keep tables simple and readable with reasonable column widths
+- Add blank lines before and after tables
+- Use consistent formatting for similar content across tables
+</table_formatting>
+
+<diagrams>
+- Use Mermaid diagrams for visual documentation where appropriate
+- Include clear titles for diagrams using the `---` syntax
+- Add descriptive node labels and comments in diagrams
+- Keep diagram structure simple and focused
+- Provide text explanations to accompany diagrams
+</diagrams>
+
+<warning>
+Inconsistent Markdown formatting can lead to rendering issues across different platforms and tools. Always test documentation in the target environment to ensure it displays correctly, especially when using extended Markdown features or specialized diagrams.
+</warning>
+
+<examples>
+<example>
+# Document Title
+
+## Section Heading
+
+Content with **bold text** and *italics*.
+
+```typescript
+function example(): void {
+  console.log('Hello, Universe!');
+}
+```
+
+| Name  | Type   | Description  |
+|:------|:------:|-------------:|
+| id    | number | Primary key  |
+| name  | string | User's name  |
+
+> 💡 **Tip:** Helpful suggestion.
+</example>
+
+<example type="alternative">
+# API Reference
+
+## Authentication
+
+Authentication uses JWT tokens passed in the Authorization header:
+
+```http
+GET /api/v1/users
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+> ⚠️ **Warning:** Never share your authentication tokens.
+
+### Error Responses
+
+Errors follow this structure:
+
+| Status | Meaning             |
+|:-------|:--------------------|
+| 401    | Unauthorized        |
+| 403    | Forbidden           |
+| 404    | Resource not found  |
+</example>
+</examples>
+
+<critical_points>
+- ALWAYS include a single level-1 heading as the document title
+- NEVER skip heading levels in document hierarchy
+- SPECIFY language in code blocks for proper syntax highlighting
+- USE consistent formatting for similar elements across documentation
+- ADD blank lines before and after block elements for readability
+- INCLUDE proper alignment indicators in tables
+- MAINTAIN a clean and consistent indentation style
+- FORMAT Mermaid diagrams with descriptive labels and comments
+- TEST documentation rendering in the target environment
+- CLOSE XML tags on their own line at the parent indentation level
+</critical_points>

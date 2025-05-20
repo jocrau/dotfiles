@@ -1,0 +1,111 @@
+---
+description: Standards for creating comprehensive feature requirements documentation
+globs: **/*.md
+alwaysApply: false
+---
+
+# Requirements Documentation Standards
+
+<introduction>
+This reference provides guidance for creating comprehensive requirements documentation for new features or enhancements. It establishes standards for structure, formatting, and content to ensure consistent, thorough requirements that support successful implementation.
+</introduction>
+
+<context>
+- Creating new feature specifications
+- Documenting enhancement requirements
+- Defining implementation criteria
+- Establishing test requirements
+- Estimating implementation effort
+</context>
+
+<specifications>
+<document_structure>
+- Follow the template structure in [[.cursor/templates/template-requirements-document.md]]
+- Organize content hierarchically with proper markdown headings
+- Separate functional from non-functional requirements
+- Include implementation phases with clear prioritization
+- Document testing requirements and acceptance criteria
+</document_structure>
+
+<content_requirements>
+- Clearly define the problem being solved and feature scope
+- Use precise language to eliminate ambiguity
+- Document MUST, SHOULD, and MUST NOT requirements with proper emphasis
+- Include edge cases and special considerations
+- Provide implementation guidance without being prescriptive
+- Document considered but rejected alternatives with reasoning
+- Define testing scenarios that verify requirements fulfillment
+- Include effort estimation with risk assessment factors
+</content_requirements>
+
+<formatting_standards>
+- Use proper markdown heading hierarchy (# for title, ## for sections, etc.)
+- Format tables with proper column alignment
+- Apply consistent formatting for requirements identifiers
+- Use bullet points for related requirements sets
+- Apply bold formatting for emphasis on critical elements
+- Include diagrams when necessary for clarity
+</formatting_standards>
+</specifications>
+
+<examples>
+<example>
+# API Rate Limiting Requirements Document
+
+## Document Information
+- **Document Title**: API Rate Limiting Requirements Document
+- **Version**: 1.0
+- **Date**: 2023-07-15
+- **Status**: Draft
+
+## 1. Introduction
+
+### 1.1 Purpose
+This document outlines the requirements for implementing API rate limiting functionality in our service. It defines how request throttling will work, configuration options, and responses for rate-limited requests.
+
+### 1.2 Background
+Our API currently lacks protection against excessive usage, which can lead to performance degradation and potential denial of service. Rate limiting is essential for maintaining system stability and ensuring fair resource allocation.
+
+### 1.3 Scope
+This enhancement focuses on:
+- Implementing token bucket algorithm for rate limiting
+- Adding per-client and per-endpoint rate limits
+- Creating configurable rate limit policies
+- Providing clear feedback when limits are reached
+- Logging and monitoring rate limit events
+</example>
+
+<example type="alternative">
+# Requirements Document: Tool Offset Gathering for Mitsubishi-Citizen Adapter
+
+## 1. Overview
+The Tool Offset Gathering feature will enable the Mitsubishi-Citizen MTConnect adapter to collect, process, and report tool offset data from Mitsubishi CNC controllers. This feature must integrate with the existing adapter architecture, respect performance constraints, and provide accurate tool offset information.
+
+## 2. Functional Requirements
+
+### 2.1 Configuration Requirements
+- **REQ-CONF-001**: The adapter MUST support enabling/disabling tool offset gathering via configuration parameter.
+- **REQ-CONF-002**: The adapter MUST support configuring the maximum number of tool offsets to gather.
+- **REQ-CONF-003**: The adapter MUST validate all tool offset configuration parameters with appropriate error handling.
+
+### 2.2 Data Collection Requirements
+- **REQ-COLL-001**: The adapter MUST collect tool offset data using the MEL API.
+- **REQ-COLL-002**: Tool offset data MUST be collected on a per-path basis, respecting machine's configured part systems.
+- **REQ-COLL-003**: The adapter MUST collect specific tool offset data types (geometry, wear, radius).
+</example>
+</specifications>
+
+<critical_points>
+- ALWAYS use the template at [[.cursor/templates/template-requirements-document.md]] as starting point
+- ORGANIZE requirements into logical categories and subcategories
+- USE "MUST", "SHOULD", and "MUST NOT" to indicate requirement priority
+- INCLUDE implementation phases with priority levels (Essential, High Value, Important, Nice to Have)
+- DOCUMENT edge cases and performance considerations explicitly
+- ESTIMATE effort for each implementation phase
+- IDENTIFY key risk factors that could impact implementation
+- MAINTAIN clear, concise language focused on what the system needs to do
+- INCLUDE realistic test scenarios covering both success and failure cases
+- DEFINE technical or domain-specific terms in the glossary section
+- REFERENCE existing components and patterns when describing implementation approach
+- VALIDATE requirements against technical feasibility before finalizing
+</critical_points>

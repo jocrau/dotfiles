@@ -1,0 +1,212 @@
+---
+description: Structured development process with self-improving agent interactions
+globs: **/*
+alwaysApply: true
+---
+
+# Development Workflow Methodology
+
+<introduction>
+This reference documents the systematic approach to development using a self-improving pipeline of agent interactions. It establishes a structured process from requirements elicitation to implementation review, supported by recursively generated cursor rules and templates.
+</introduction>
+
+<context>
+- Feature planning and implementation scenarios
+- Requirements gathering and refinement workflows
+- Technical discovery and architecture exploration
+- Code implementation and review processes
+- Continuous workflow improvement through rule generation
+</context>
+
+<core_principles>
+- Structured development through defined workflow phases
+- Self-improving processes through rule generation
+- Evidence-based planning before implementation
+- Documentation as first-class artifacts
+- Incremental implementation with focused changes
+- Pipeline approach where outputs feed into subsequent stages
+</core_principles>
+
+<workflow_phases>
+<phase name="Requirements Elicitation">
+- Use sequential reasoning to thoroughly understand and reason about the problem domain and context provided
+- Examine existing documentation and codebase
+- Create document skeleton for requirements as first step
+- Present edge cases and considerations in chat for collaborative discussion
+- Research API and codebase capabilities before proposing requirements
+- Verify implementation feasibility before finalizing requirements
+- Produce a comprehensive requirements document as markdown
+- Identify edge cases, multiple angles, and potential gaps
+- Ask clarifying questions to resolve ambiguities
+- Request more context be loaded by the user from external documentation or domain knowledge to close gaps in understanding
+- Output: Requirements document based on [[.cursor/templates/template-requirements-document.md]]
+</phase>
+
+<phase name="Technical Discovery and Planning">
+- Explore the codebase relative to the intended feature
+- Request specific documentation searches when built-in tools are insufficient
+- Create a technical description of the architectural components
+- Document existing patterns, interfaces, and dependencies
+- Identify potential technical constraints and considerations
+- Map feature requirements to technical components
+- Identify all areas of the codebase connected to and relevant to feature
+- Implement progressive refinement protocol for iterative improvement
+  - Review initial technical specifications against requirements
+  - Identify gaps, inconsistencies or emergent requirements
+  - Update requirements document with new insights when needed
+  - Cross-validate parameter values, naming conventions, and interfaces
+  - Document rationale for technical decisions and trade-offs
+- Outline implementation approach with phased milestones
+- Avoid actual implementation at this stage
+- Ask the user to provide curated context for any areas of implementation where you are uncertain or making assumptions
+- Use sequential thinking to reason about planning the technical implementation
+- Reference [[.cursor/rules/1000-software-engineering-principles.mdc]] to guide all technical planning decisions
+- Create a comprehensive Feature Technical Specification following [[.cursor/rules/801-feature-technical-specification.mdc]]
+- Present the specification to the engineer for review
+- Output: Feature Technical Specification document
+</phase>
+
+<phase name="Implementation">
+- Execute exactly what was identified in the Feature Planning
+- Make incremental, focused changes following coding standards [[.cursor/rules/1000-software-engineering-principles.mdc]]
+- Immediately stop and consult if deviations from plan are necessary
+- Return to Requirements Elicitation if significant adjustments needed
+- Update all relevant documentation with new information
+- ALWAYS implement new features by following existing patterns in the codebase for similar functionality
+- IDENTIFY a reference implementation before writing new code (e.g., how other data items are created and managed)
+- MATCH memory management, initialization, and cleanup patterns exactly
+- DOCUMENT any architectural pattern deviations following [[.cursor/rules/1005-architectural-decisions.mdc]]
+- PROACTIVELY highlight architectural decisions that differ from established patterns
+- JUSTIFY deviations with clear performance, memory, or other technical reasons
+- LIMIT all changes to the minimal set required for the feature implementation
+- PRESERVE all comments, documentation, and explanatory notes in existing code
+- NEVER modify core scheduling or data management mechanisms
+- MAINTAIN function signatures and parameter lists of existing methods
+- PRESERVE existing control flow, especially in critical areas like scan cycles
+- REJECT the urge to "improve" or "refactor" unrelated code while implementing features
+- REVIEW diffs before submitting to verify no unintended changes to existing functionality
+- VALIDATE modifications against existing patterns for class members, data types, and method structures
+- VERIFY new code preserves existing error handling and thread safety mechanisms
+- IMPLEMENT features in small, focused increments that can be independently verified
+- TEST each increment before proceeding to the next
+- CONFIRM functionality without altering existing behavior
+- Output: Implemented code changes
+</phase>
+
+<phase name="Review">
+- Conduct line-by-line unit level review of all changes
+- Verify compliance with original requirements
+- Identify any deviations from the implementation plan
+- Validate edge cases and error handling
+- Document lessons learned for future iterations
+- Output: Review findings and improvement suggestions
+</phase>
+</workflow_phases>
+
+<collaboration_protocol>
+- Use staged outputs to promote incremental collaboration
+- Present exploration items for discussion before proceeding
+- Create document skeletons early and iterate on content
+- Perform API feasibility checks before proposing requirements
+- Present edge cases and considerations in chat, not directly in documents
+- Document rationale for decisions not to implement certain features
+- Seek external searches only when internal documentation is insufficient
+- Explicitly ask for documentation search help when needed
+</collaboration_protocol>
+
+<template_references>
+- Requirements Documentation:
+  - [[.cursor/templates/template-requirements-document.md]]: Comprehensive requirements template
+  - [[.cursor/templates/template-prd.md]]: Product requirements document format
+- Technical Documentation:
+  - [[.cursor/templates/template-subsystem-specification.md]]: Subsystem technical specification
+  - [[.cursor/templates/template-arch.md]]: Architecture definition document
+- Implementation Planning:
+  - [[.cursor/templates/template-implementation-plan.md]]: Detailed implementation plan template
+  - [[.cursor/templates/template-story.md]]: Feature implementation story format
+</template_references>
+
+<rule_generation>
+- Create cursor rules whenever:
+  - Agent interactions require repeated guidance
+  - Implementation patterns need standardization
+  - Workflow inefficiencies are identified
+  - Templates would accelerate future work
+- Follow meta-rule pattern defined in [[.cursor/rules/000-cursor-rules.mdc]]
+- Use templates to ensure rule consistency
+- Build rules that can feed into each other (pipeline approach)
+- Update existing rules with new insights
+</rule_generation>
+
+<implementation_patterns>
+- Complete code implementations without placeholders
+- Minimal changes to achieve required outcomes
+- Step-by-step problem decomposition
+- Analysis-driven planning before implementation
+- Diagnostic code insertion for unclear bugs
+- Functional comments describing intent and purpose
+- Architecture explanations for alternate approaches
+- Incremental verification through targeted testing
+</implementation_patterns>
+
+<examples>
+<example>
+// Effective workflow application
+PHASE: Requirements Elicitation
+ACTION: Create document skeleton first
+DOCUMENT: mitsubishi-citizen/doc/tool-offsets-requirements.md
+
+PHASE: Technical Discovery
+ACTION: Research API capabilities through headers and documentation
+```cpp
+// Tool Offset Data Access in MEL API
+#define SECT_T_OFFSET_NUMBER_OF_SETS 31,20000 /*  Number of tool offset sets  */
+#define SECT_T_OFFSET_TIP_WEAR_X(x)  92,1000+x /*  Tool offset amount:  nose wear amount: X  */
+```
+
+PHASE: Collaborative Exploration
+ACTION: Present edge cases in chat for discussion
+```
+EDGE CASE: Handling tool offset precision
+ANALYSIS: Documentation states tool offsets use 0.5 μm precision
+QUESTION: How should we handle precision conversion in the implementation?
+```
+</example>
+
+<example type="alternative">
+// Rule Generation Example
+OBSERVATION: Document creation timing is inconsistent
+REASONING: Requirements artifacts should be created early
+RULE UPDATE:
+```
+<phase name="Requirements Elicitation">
+- Create document skeleton for requirements as first step
+- ...
+</phase>
+```
+</example>
+</examples>
+
+<critical_points>
+- ALWAYS follow the structured workflow PHASES in sequence
+- CREATE document skeletons IMMEDIATELY after understanding initial requirements
+- PRESENT edge cases in chat for collaborative discussion, not directly in documents
+- VERIFY API capabilities and implementation feasibility before finalizing requirements
+- DOCUMENT outputs from each phase as markdown in the repository
+- GENERATE new rules when patterns emerge or inefficiencies are found
+- PLAN completely before implementation to prevent rework
+- PRESERVE meta-rule approach to maintain rule pipeline concept
+- CREATE templates that standardize rule generation
+- NEVER skip phases in the workflow process
+- VALIDATE requirements against API capabilities before proceeding to implementation
+- CONSULT engineer immediately when deviations from plan are necessary
+- UPDATE documentation when new information is discovered
+- REVIEW against original requirements and implementation plan
+- FOCUS on building a self-improving system through rule generation
+- TREAT documentation as first-class artifacts, not afterthoughts
+- LEVERAGE pipeline concept where outputs feed subsequent phases
+- USE the appropriate templates from [[.cursor/templates/]] for each phase
+- REQUEST documentation search help when built-in tools are insufficient
+- DOCUMENT rationale for decisions not to implement certain features
+- IMPLEMENT incremental collaboration with staged outputs
+</critical_points>
