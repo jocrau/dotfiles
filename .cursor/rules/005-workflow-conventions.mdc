@@ -3,15 +3,14 @@ description: Structured development process with self-improving agent interactio
 globs: **/*
 alwaysApply: true
 ---
-
-# Development Workflow Methodology
+# Development Workflow Methodology for Rust and TypeScript Projects
 
 <introduction>
-This reference documents the systematic approach to development using a self-improving pipeline of agent interactions. It establishes a structured process from requirements elicitation to implementation review, supported by recursively generated cursor rules and templates.
+This reference documents the systematic approach to development using a self-improving pipeline of agent interactions. It establishes a structured process from requirements elicitation to implementation review, supported by recursively generated cursor rules and templates, with a focus on Rust and TypeScript projects.
 </introduction>
 
 <context>
-- Feature planning and implementation scenarios
+- Feature planning and implementation scenarios for Rust and TypeScript codebases
 - Requirements gathering and refinement workflows
 - Technical discovery and architecture exploration
 - Code implementation and review processes
@@ -25,6 +24,7 @@ This reference documents the systematic approach to development using a self-imp
 - Documentation as first-class artifacts
 - Incremental implementation with focused changes
 - Pipeline approach where outputs feed into subsequent stages
+- Idiomatic Rust and TypeScript code that follows ecosystem best practices
 </core_principles>
 
 <workflow_phases>
@@ -57,6 +57,7 @@ This reference documents the systematic approach to development using a self-imp
   - Cross-validate parameter values, naming conventions, and interfaces
   - Document rationale for technical decisions and trade-offs
 - Outline implementation approach with phased milestones
+- Consider language-specific best practices (Rust's ownership model, TypeScript's type system)
 - Avoid actual implementation at this stage
 - Ask the user to provide curated context for any areas of implementation where you are uncertain or making assumptions
 - Use sequential thinking to reason about planning the technical implementation
@@ -68,25 +69,25 @@ This reference documents the systematic approach to development using a self-imp
 
 <phase name="Implementation">
 - Execute exactly what was identified in the Feature Planning
-- Make incremental, focused changes following coding standards [[.cursor/rules/1000-software-engineering-principles.mdc]]
+- Make incremental, focused changes following coding standards in [[.cursor/rules/rust.mdc]] or [[.cursor/rules/typescript.mdc]]
 - Immediately stop and consult if deviations from plan are necessary
 - Return to Requirements Elicitation if significant adjustments needed
 - Update all relevant documentation with new information
 - ALWAYS implement new features by following existing patterns in the codebase for similar functionality
 - IDENTIFY a reference implementation before writing new code (e.g., how other data items are created and managed)
-- MATCH memory management, initialization, and cleanup patterns exactly
+- FOLLOW Rust's ownership model and TypeScript's type system idioms
 - DOCUMENT any architectural pattern deviations following [[.cursor/rules/1005-architectural-decisions.mdc]]
 - PROACTIVELY highlight architectural decisions that differ from established patterns
 - JUSTIFY deviations with clear performance, memory, or other technical reasons
 - LIMIT all changes to the minimal set required for the feature implementation
 - PRESERVE all comments, documentation, and explanatory notes in existing code
-- NEVER modify core scheduling or data management mechanisms
+- NEVER modify core error handling or data management mechanisms
 - MAINTAIN function signatures and parameter lists of existing methods
-- PRESERVE existing control flow, especially in critical areas like scan cycles
+- PRESERVE existing control flow, especially in critical areas
 - REJECT the urge to "improve" or "refactor" unrelated code while implementing features
 - REVIEW diffs before submitting to verify no unintended changes to existing functionality
-- VALIDATE modifications against existing patterns for class members, data types, and method structures
-- VERIFY new code preserves existing error handling and thread safety mechanisms
+- VALIDATE modifications against existing patterns for struct/class members, data types, and method structures
+- VERIFY new code preserves existing error handling mechanisms (Result/Option in Rust, exception handling in TypeScript)
 - IMPLEMENT features in small, focused increments that can be independently verified
 - TEST each increment before proceeding to the next
 - CONFIRM functionality without altering existing behavior
@@ -98,6 +99,8 @@ This reference documents the systematic approach to development using a self-imp
 - Verify compliance with original requirements
 - Identify any deviations from the implementation plan
 - Validate edge cases and error handling
+- Ensure Rust code properly handles ownership, borrowing, and lifetimes
+- Verify TypeScript type safety and proper interface implementations
 - Document lessons learned for future iterations
 - Output: Review findings and improvement suggestions
 </phase>
@@ -154,22 +157,31 @@ This reference documents the systematic approach to development using a self-imp
 // Effective workflow application
 PHASE: Requirements Elicitation
 ACTION: Create document skeleton first
-DOCUMENT: mitsubishi-citizen/doc/tool-offsets-requirements.md
+DOCUMENT: rust-web-api/docs/user-authentication-requirements.md
 
 PHASE: Technical Discovery
-ACTION: Research API capabilities through headers and documentation
-```cpp
-// Tool Offset Data Access in MEL API
-#define SECT_T_OFFSET_NUMBER_OF_SETS 31,20000 /*  Number of tool offset sets  */
-#define SECT_T_OFFSET_TIP_WEAR_X(x)  92,1000+x /*  Tool offset amount:  nose wear amount: X  */
+ACTION: Research API capabilities through module documentation
+```rust
+// User Authentication in the Rust Web API
+pub struct AuthConfig {
+    /// Number of authentication attempts allowed before lockout
+    pub max_attempts: u32,
+    /// Duration of the authentication token in seconds
+    pub token_duration: u64,
+}
+
+/// Authenticates a user and returns a Result containing the auth token or an error
+pub fn authenticate_user(credentials: Credentials) -> Result<AuthToken, AuthError> {
+    // Implementation details
+}
 ```
 
 PHASE: Collaborative Exploration
 ACTION: Present edge cases in chat for discussion
 ```
-EDGE CASE: Handling tool offset precision
-ANALYSIS: Documentation states tool offsets use 0.5 μm precision
-QUESTION: How should we handle precision conversion in the implementation?
+EDGE CASE: Handling token expiration during active sessions
+ANALYSIS: Documentation states tokens expire after token_duration seconds
+QUESTION: Should we implement automatic token refresh for active sessions?
 ```
 </example>
 
@@ -209,4 +221,6 @@ RULE UPDATE:
 - REQUEST documentation search help when built-in tools are insufficient
 - DOCUMENT rationale for decisions not to implement certain features
 - IMPLEMENT incremental collaboration with staged outputs
+- FOLLOW Rust's ownership and borrowing rules in all code
+- ENSURE TypeScript code has proper type safety and interface implementations
 </critical_points>

@@ -3,7 +3,6 @@ description: APPLY software engineering principles when DESIGNING code to ENSURE
 globs: **/*.{cpp,hpp,c,h,js,ts,py}
 alwaysApply: false
 ---
-
 # Software Engineering Best Practices
 
 <introduction>
@@ -75,102 +74,122 @@ Overly complex designs can be as problematic as poorly structured ones. Always s
 <examples>
 <example>
 // Good: Single Responsibility and Dependency Inversion
-class OrderProcessor {
-private:
-  IPaymentGateway& paymentGateway;
-  IInventoryManager& inventoryManager;
-  IOrderRepository& orderRepository;
+struct OrderProcessor<P, I, O>
+where
+    P: PaymentGateway,
+    I: InventoryManager,
+    O: OrderRepository,
+{
+    payment_gateway: P,
+    inventory_manager: I,
+    order_repository: O,
+}
 
-public:
-  OrderProcessor(
-    IPaymentGateway& paymentGateway,
-    IInventoryManager& inventoryManager,
-    IOrderRepository& orderRepository
-  ) : paymentGateway(paymentGateway),
-      inventoryManager(inventoryManager),
-      orderRepository(orderRepository) {}
-
-  Result processOrder(const Order& order) {
-    // Each step delegated to specialized components
-    if (!inventoryManager.checkAvailability(order.items)) {
-      return Result::OutOfStock;
+impl<P, I, O> OrderProcessor<P, I, O>
+where
+    P: PaymentGateway,
+    I: InventoryManager,
+    O: OrderRepository,
+{
+    pub fn new(payment_gateway: P, inventory_manager: I, order_repository: O) -> Self {
+        Self {
+            payment_gateway,
+            inventory_manager,
+            order_repository,
+        }
     }
 
-    PaymentResult paymentResult = paymentGateway.processPayment(order.payment);
-    if (!paymentResult.success) {
-      return Result::PaymentFailed;
-    }
+    pub fn process_order(&self, order: &Order) -> Result<(), OrderError> {
+        // Each step delegated to specialized components
+        if !self.inventory_manager.check_availability(&order.items) {
+            return Err(OrderError::OutOfStock);
+        }
 
-    inventoryManager.updateInventory(order.items);
-    orderRepository.save(order);
-    return Result::Success;
-  }
-};
+        let payment_result = self.payment_gateway.process_payment(&order.payment)?;
+        
+        self.inventory_manager.update_inventory(&order.items)?;
+        self.order_repository.save(order)?;
+        
+        Ok(())
+    }
+}
 </example>
 
 <example type="alternative">
 // Composition over Inheritance and Interface Segregation
-class ReportGenerator {
-private:
-  IDataSource& dataSource;
-  IFormatter& formatter;
-  IOutputWriter& writer;
+struct ReportGenerator<D, F, W>
+where
+    D: DataSource,
+    F: Formatter,
+    W: OutputWriter,
+{
+    data_source: D,
+    formatter: F,
+    writer: W,
+}
 
-public:
-  ReportGenerator(
-    IDataSource& dataSource,
-    IFormatter& formatter,
-    IOutputWriter& writer
-  ) : dataSource(dataSource),
-      formatter(formatter),
-      writer(writer) {}
+impl<D, F, W> ReportGenerator<D, F, W>
+where
+    D: DataSource,
+    F: Formatter,
+    W: OutputWriter,
+{
+    pub fn new(data_source: D, formatter: F, writer: W) -> Self {
+        Self {
+            data_source,
+            formatter,
+            writer,
+        }
+    }
 
-  void generateReport() {
-    auto data = dataSource.getData();
-    auto formattedReport = formatter.format(data);
-    writer.write(formattedReport);
-  }
-};
+    pub fn generate_report(&self) -> Result<(), ReportError> {
+        let data = self.data_source.get_data()?;
+        let formatted_report = self.formatter.format(&data)?;
+        self.writer.write(&formatted_report)?;
+        
+        Ok(())
+    }
+}
 
-// Small, focused interfaces
-class IDataSource {
-public:
-  virtual Data getData() = 0;
-  virtual ~IDataSource() = default;
-};
+// Small, focused traits
+trait DataSource {
+    fn get_data(&self) -> Result<Data, DataSourceError>;
+}
 
-class IFormatter {
-public:
-  virtual FormattedContent format(const Data& data) = 0;
-  virtual ~IFormatter() = default;
-};
+trait Formatter {
+    fn format(&self, data: &Data) -> Result<FormattedContent, FormattingError>;
+}
 
-class IOutputWriter {
-public:
-  virtual void write(const FormattedContent& content) = 0;
-  virtual ~IOutputWriter() = default;
-};
+trait OutputWriter {
+    fn write(&self, content: &FormattedContent) -> Result<(), OutputError>;
+}
 </example>
 
 <example type="api_integration">
-// Good: Using API constants from original headers
-#include "external_api_header.h"
+// Good: Using API constants from original crates
+use external_api::API_SUCCESS_CODE;
 
-void processData() {
-  // Use constants defined in the external API
-  if (apiFunction() == API_SUCCESS_CODE) {
-    // Process success case
-  }
+fn process_data() -> Result<(), ApiError> {
+    // Use constants defined in the external API
+    if external_api::api_function() == API_SUCCESS_CODE {
+        // Process success case
+        Ok(())
+    } else {
+        Err(ApiError::ProcessingFailed)
+    }
 }
 
 // Bad: Redefining API constants
-// #define API_SUCCESS_CODE 0  // DON'T DO THIS!
+// const API_SUCCESS_CODE: i32 = 0;  // DON'T DO THIS!
 
-void incorrectProcessing() {
-  // Using redefined constants creates maintenance problems
-  if (apiFunction() == API_SUCCESS_CODE) {
-    // This could break if the API changes
-  }
+fn incorrect_processing() -> Result<(), ApiError> {
+    // Using redefined constants creates maintenance problems
+    if external_api::api_function() == API_SUCCESS_CODE {
+        // This could break if the API changes
+        Ok(())
+    } else {
+        Err(ApiError::ProcessingFailed)
+    }
 }
 </example>
 </examples>

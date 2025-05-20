@@ -3,7 +3,6 @@ description: Requirements for documenting architectural decisions that deviate f
 globs: **/*.{cpp,hpp,h,c,cc}
 alwaysApply: false
 ---
-
 # Architectural Decision Documentation
 
 <introduction>
@@ -41,34 +40,34 @@ This reference documents the requirements for clearly documenting architectural 
 <examples>
 <example>
 // Good documentation for architectural deviation
-/**
- * This class uses lazy initialization for datums rather than upfront creation.
- *
- * IMPLEMENTATION NOTE:
- * This deviates from the standard pattern seen in DevicePath/Machine classes:
- * 1. Standard pattern: All datums created during initialization
- * 2. This pattern: Datums created on-demand via getOrCreateDatum()
- *
- * Reasons for deviation:
- * - Potentially hundreds of datums would be wasteful to create upfront
- * - Only a small subset are accessed in any given cycle
- * - Memory usage optimization critical for large installations
- * - Allows prioritizing active tools in scanning logic
- *
- * Trade-offs:
- * - Less consistent with rest of codebase
- * - Slightly more complex datum management
- * - More difficult to track all possible datums
- */
+/// This struct uses lazy initialization for metrics rather than upfront creation.
+///
+/// # IMPLEMENTATION NOTE
+/// This deviates from the standard pattern seen in Agent/Collector structs:
+/// 1. Standard pattern: All metrics created during initialization
+/// 2. This pattern: Metrics created on-demand via get_or_create_metric()
+///
+/// ## Reasons for deviation
+/// - Potentially hundreds of metrics would be wasteful to create upfront
+/// - Only a small subset are accessed in any given cycle
+/// - Memory usage optimization critical for large installations
+/// - Allows prioritizing active metrics in processing logic
+///
+/// ## Trade-offs
+/// - Less consistent with rest of codebase
+/// - Slightly more complex metric management
+/// - More difficult to track all possible metrics
+pub struct MetricsManager {
+    // Implementation details...
+}
 </example>
 
 <example type="alternative">
 // Insufficient documentation
-// This uses a map instead of member variables for tool offsets
-class ToolOffset {
-private:
-    std::map<std::string, DeviceDatum*> mToolOffsetData;
-};
+// This uses a HashMap instead of struct fields for tool offsets
+pub struct ToolOffset {
+    tool_offset_data: HashMap<String, Box<dyn Metric>>,
+}
 </example>
 </examples>
 
