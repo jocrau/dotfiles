@@ -1,6 +1,6 @@
 ---
 description: Requirements for documenting architectural decisions that deviate from established patterns
-globs: **/*.{cpp,hpp,h,c,cc}
+globs: **/*.{cpp,hpp,c,h,rs,ts,js}
 alwaysApply: false
 ---
 # Architectural Decision Documentation

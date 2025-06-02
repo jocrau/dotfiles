@@ -1,6 +1,6 @@
 ---
 description: Architecture analysis methodology for subsystem technical documentation
-globs: **/*.{cpp,hpp,c,h,js,ts,py,md}
+globs: **/*.{cpp,hpp,c,h,rs,js,ts,py,md}
 alwaysApply: false
 ---
 
