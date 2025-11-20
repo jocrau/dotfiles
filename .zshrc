@@ -92,10 +92,11 @@ path_additions=(
     "/opt/homebrew/opt/mysql@8.0/bin"
     "/opt/homebrew/opt/llvm/bin"
     "/opt/homebrew/opt/openssl@1.1/bin"
+    "/opt/homebrew/Cellar/tfenv/3.0.0/bin"
     "$HOME/.wasmer/bin"
     "$HOME/.wasmtime/bin"
     "$HOME/.local/bin"
-    "$PNPM_HOME"
+    "$PNPM_HOME"    "/opt/homebrew/Cellar/tfenv/3.0.0/bin"
 )
 
 # Add all paths
@@ -170,7 +171,7 @@ load_completions() {
     autoload -U +X bashcompinit && bashcompinit
     
     # Complete specific tools
-    complete -o nospace -C /usr/local/bin/terraform terraform
+    # complete -o nospace -C /usr/local/bin/terraform terraform
     [ -f ~/completions/_istioctl ] && source ~/completions/_istioctl
     eval "$(op completion zsh)"; compdef _op op
 }
@@ -251,3 +252,6 @@ export FZF_DEFAULT_OPTS='--bind ctrl-f:page-down,ctrl-b:page-up'
 # ===== PERFORMANCE DISPLAY =====
 # Uncomment to see performance results (works with zprof above)
 # zprof
+
+# Claude Code
+alias claude="/Users/jocrau/.claude/local/claude"
