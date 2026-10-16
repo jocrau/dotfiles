@@ -1,0 +1,48 @@
+# Match the iTerm2 look
+theme = iTerm2 Solarized Dark
+font-family = MesloLGS NF
+font-size = 12
+
+# First window attaches to the persistent herdr session; new windows/tabs get a plain shell
+initial-command = /opt/homebrew/bin/herdr
+
+# Herdr owns panes, tabs, links and right-click menus. If Ghostty's context menu
+# ever pops up over herdr's, change this to `ignore`.
+right-click-action = context-menu
+
+# Left Option stays a normal macOS Option key (umlauts via Option+a/o/u/s).
+# Use right Option as Alt for herdr's ctrl+alt chords and option+arrow word jumps.
+macos-option-as-alt = right
+
+# iTerm-style Cmd shortcuts are handled by herdr (tabs, workspaces, splits).
+# Cmd+W stays with Ghostty: closing the window only detaches from herdr (agents keep running).
+# Cmd+Option+W closes the herdr tab instead (deliberate: stops agents in that tab).
+keybind = super+alt+w=unbind
+keybind = super+t=unbind
+keybind = super+d=unbind
+keybind = super+shift+d=unbind
+keybind = super+arrow_left=unbind
+keybind = super+arrow_right=unbind
+keybind = super+arrow_up=unbind
+keybind = super+arrow_down=unbind
+keybind = super+digit_1=unbind
+keybind = super+digit_2=unbind
+keybind = super+digit_3=unbind
+keybind = super+digit_4=unbind
+keybind = super+digit_5=unbind
+keybind = super+digit_6=unbind
+keybind = super+digit_7=unbind
+keybind = super+digit_8=unbind
+keybind = super+1=unbind
+keybind = super+2=unbind
+keybind = super+3=unbind
+keybind = super+4=unbind
+keybind = super+5=unbind
+keybind = super+6=unbind
+keybind = super+7=unbind
+keybind = super+8=unbind
+keybind = super+9=unbind
+# Cmd+G opens the live git view in herdr (Cmd+Shift+G still finds the previous match)
+keybind = super+g=unbind
+# Cmd+Shift+W opens the herdr workspace picker (Cmd+W still closes the window)
+keybind = super+shift+w=unbind

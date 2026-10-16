@@ -1,0 +1,3 @@
+miiraheart/herdr-beads
+alexarthurs/herdr-sidebar/plugins/herdr-sidebar
+robbyrussell/herdr-ohmyzsh

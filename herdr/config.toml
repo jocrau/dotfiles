@@ -1,0 +1,66 @@
+onboarding = false
+
+[ui]
+status_indicators = "symbols"
+# Open new tabs immediately with a generated name; rename later (prefix+shift+t)
+prompt_new_tab_name = false
+# Room for the Claude session summary line ($summary) in the Spaces sidebar
+sidebar_max_width = 48
+
+[theme]
+name = "solarized"
+auto_switch = false
+
+[keys]
+prefix = "ctrl+space"
+
+# iTerm-style Cmd shortcuts (Ghostty unbinds these keys so they reach herdr)
+new_tab = ["prefix+c", "ctrl+alt+c", "cmd+t"]
+close_tab = ["prefix+shift+x", "cmd+alt+w"]
+previous_tab = ["prefix+p", "ctrl+alt+[", "cmd+left"]
+next_tab = ["prefix+n", "ctrl+alt+]", "cmd+right"]
+previous_workspace = "cmd+up"
+next_workspace = "cmd+down"
+switch_tab = ["prefix+1..9", "cmd+1..9"]
+split_vertical = ["prefix+v", "ctrl+alt+d", "cmd+d"]
+split_horizontal = ["prefix+minus", "ctrl+alt+shift+d", "cmd+shift+d"]
+workspace_picker = ["prefix+w", "cmd+shift+w"]
+
+[[keys.command]]
+key = "cmd+o"
+type = "plugin_action"
+command = "herdr-sidebar.open-sidebar"
+description = "Toggle file explorer / source control sidebar"
+
+[[keys.command]]
+key = "cmd+b"
+type = "shell"
+command = "/Users/jocrau/.config/herdr/scripts/beads-board.sh"
+description = "Toggle beads board overlay (herdr-beads, full width)"
+
+[[keys.command]]
+key = "cmd+g"
+type = "shell"
+command = "/Users/jocrau/.config/herdr/scripts/live-git.sh"
+description = "Toggle live git view (Source Control that keeps refreshing)"
+
+[[keys.command]]
+key = "cmd+shift+b"
+type = "shell"
+command = "/Users/jocrau/.config/herdr/scripts/beads-tree.sh"
+description = "Toggle full-tab live beads tree (bd list --watch)"
+
+# Spaces sidebar: name, then branch only when it isn't main/master, then the
+# Claude session summary reported by ~/.config/herdr/scripts/claude-summary.py.
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  [{ token = "branch", dim = true, rules = [{ equals = "main", hide = true }, { equals = "master", hide = true }] }, "git_status"],
+  [{ token = "$summary", dim = true }],
+]
+
+[[keys.command]]
+key = "cmd+shift+a"
+type = "shell"
+command = "/Users/jocrau/.config/herdr/scripts/attach-sessions.py"
+description = "Give every unattached Claude background session its own workspace"
