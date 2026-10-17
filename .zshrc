@@ -22,7 +22,7 @@ export OP_BIOMETRIC_UNLOCK_ENABLED=true
 if [[ -n $SSH_CONNECTION ]]; then
     export EDITOR='vim'
 else
-    export EDITOR='cursor'
+    export EDITOR='code --wait'
 fi
 
 # ===== OH-MY-ZSH CONFIGURATION =====
