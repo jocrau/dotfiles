@@ -1,14 +1,23 @@
 #!/usr/bin/python3 -I
-"""Give every Claude background session that isn't open in herdr its own workspace.
+"""Bring Claude background sessions into herdr and keep their panes in sync.
 
-Bound to cmd+shift+a in ~/.config/herdr/config.toml. A session counts as open
-when some pane's foreground process is `claude attach <id>` (same match as
-claude-summary.py). New workspaces are named after the session, start in its
-cwd, and don't take focus; a herdr notification reports what was attached.
+Bound to cmd+shift+a in ~/.config/herdr/config.toml. Two jobs:
+
+- Attach: every background session that isn't open in herdr gets its own
+  workspace, named after the session, started in its cwd, without focus.
+- Re-sync: a session's viewer pane (`claude attach <id>`) keeps the folder it
+  started in, so after `/cd` or a worktree switch herdr shows the wrong repo.
+  Such panes are replaced by a fresh viewer started in the session's cwd, in
+  the same tab; the session itself keeps running throughout.
+
+A session counts as open when some pane's foreground process is
+`claude attach <id>` (same match as claude-summary.py). A herdr notification
+reports what was done.
 """
 import json
 import os
 import subprocess
+import time
 
 HERDR = "/opt/homebrew/bin/herdr"
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
@@ -29,9 +38,9 @@ def load_json(args, default):
         return default
 
 
-def attached_ids(panes):
-    """Session ids already attached in some herdr pane."""
-    ids = set()
+def viewers(panes):
+    """Map each attached session id to (pane, viewer cwd)."""
+    found = {}
     for pane in panes:
         if pane.get("agent") != "claude":
             continue
@@ -39,34 +48,75 @@ def attached_ids(panes):
         for proc in info.get("result", {}).get("process_info", {}).get("foreground_processes", []):
             argv = proc.get("argv") or []
             if len(argv) >= 3 and argv[1] == "attach":
-                ids.add(argv[2])
-    return ids
+                found[argv[2]] = (pane, proc.get("cwd") or pane.get("foreground_cwd") or "")
+    return found
+
+
+def wait_for(check, seconds):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if check():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def resync(agent, pane):
+    """Replace a viewer pane with one started in the session's cwd."""
+    old = pane["pane_id"]
+    split = [HERDR, "pane", "split", old, "--direction", "right", "--cwd", agent["cwd"]]
+    split.append("--focus" if pane.get("focused") else "--no-focus")
+    new = (load_json(split, {}).get("result", {}).get("pane", {}) or {}).get("pane_id")
+    if not new:
+        return False
+    wait_for(lambda: run([HERDR, "pane", "read", new, "--source", "visible"]).strip(), 3)
+    run([HERDR, "pane", "run", new, "claude attach " + agent["id"]])
+
+    def attached():
+        info = load_json([HERDR, "pane", "process-info", "--pane", new], {})
+        procs = info.get("result", {}).get("process_info", {}).get("foreground_processes", [])
+        return any((p.get("argv") or [])[1:3] == ["attach", agent["id"]] for p in procs)
+
+    if not wait_for(attached, 8):
+        run([HERDR, "pane", "close", new])  # keep the old viewer rather than lose it
+        return False
+    run([HERDR, "pane", "close", old])
+    return True
 
 
 def main():
     agents = load_json([CLAUDE, "agents", "--json", "--all"], [])
     panes = load_json([HERDR, "pane", "list"], {}).get("result", {}).get("panes", [])
-    open_ids = attached_ids(panes)
-    added = []
+    open_ = viewers(panes)
+    added, synced = [], []
     for agent in agents:
         if agent.get("kind") != "background":
             continue
-        keys = {agent.get("id"), agent.get("sessionId"), agent.get("name")}
-        if keys & open_ids:
-            continue
         name = agent.get("name") or agent.get("id")
+        hit = next((open_[k] for k in (agent.get("id"), agent.get("sessionId"), agent.get("name")) if k in open_), None)
+        if hit:
+            pane, cwd = hit
+            if os.path.isdir(agent.get("cwd") or "") and os.path.realpath(cwd) != os.path.realpath(agent["cwd"]):
+                if resync(agent, pane):
+                    synced.append(name)
+            continue
         cwd = agent.get("cwd") if os.path.isdir(agent.get("cwd") or "") else os.path.expanduser("~")
         created = load_json([HERDR, "workspace", "create", "--cwd", cwd, "--label", name, "--no-focus"], {})
-        pane = next((o["pane_id"] for o in _objects(created) if o.get("pane_id")), None)
-        if not pane:
+        new = next((o["pane_id"] for o in _objects(created) if o.get("pane_id")), None)
+        if not new:
             continue
-        run([HERDR, "pane", "run", pane, "claude attach " + agent["id"]])
+        run([HERDR, "pane", "run", new, "claude attach " + agent["id"]])
         added.append(name)
+    parts = []
     if added:
-        body = ", ".join(added)
-        run([HERDR, "notification", "show", f"Attached {len(added)} session(s)", "--body", body, "--sound", "none"])
+        parts.append(f"attached {len(added)}: " + ", ".join(added))
+    if synced:
+        parts.append(f"moved {len(synced)} to their session's folder: " + ", ".join(synced))
+    if parts:
+        run([HERDR, "notification", "show", "Claude sessions", "--body", "; ".join(parts), "--sound", "none"])
     else:
-        run([HERDR, "notification", "show", "All background sessions are already in herdr", "--sound", "none"])
+        run([HERDR, "notification", "show", "All background sessions are in herdr and in sync", "--sound", "none"])
+    print("; ".join(parts) or "nothing to do")
 
 
 def _objects(value):
