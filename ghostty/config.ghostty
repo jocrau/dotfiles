@@ -6,6 +6,13 @@ font-size = 12
 # First window attaches to the persistent herdr session; new windows/tabs get a plain shell
 initial-command = /opt/homebrew/bin/herdr
 
+# Quick terminal: a drop-down scratch shell (outside herdr) over any app.
+# The global shortcut needs Accessibility permission for Ghostty (asked once).
+quick-terminal-position = top
+quick-terminal-size = 40%
+quick-terminal-autohide = true
+keybind = global:ctrl+backquote=toggle_quick_terminal
+
 # Herdr owns panes, tabs, links and right-click menus. If Ghostty's context menu
 # ever pops up over herdr's, change this to `ignore`.
 right-click-action = context-menu
