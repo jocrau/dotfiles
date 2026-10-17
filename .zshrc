@@ -16,6 +16,8 @@ export AWS_HOME=$HOME/.aws
 export ACCEPT_HIGHCHARTS_LICENSE=YES
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
+[ "$TERM_PROGRAM" = herdr ] && export FORCE_HYPERLINK=1
+
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
     export EDITOR='vim'
@@ -53,6 +55,7 @@ plugins=(
     kube-ps1 
     rust 
     npm 
+    herdr 
 )
 
 # Lazy-load less frequently used plugins
@@ -65,7 +68,7 @@ lazy_load_plugins() {
         git-extras 
         httpie 
         helm 
-        H-S-MW
+        H-S-MW 
     )
     
     # Reload just the plugins (not all of Oh-My-Zsh)
@@ -84,6 +87,7 @@ path_additions=(
     "$HOME/bin"
     "/usr/local/bin"
     "/usr/local/sbin"
+    "/usr/local/liquibase"
     "$HOME/.krew/bin"
     "$HOME/.jenv/bin"
     "$HOME/.aws"
@@ -96,7 +100,7 @@ path_additions=(
     "$HOME/.wasmer/bin"
     "$HOME/.wasmtime/bin"
     "$HOME/.local/bin"
-    "$PNPM_HOME"    "/opt/homebrew/Cellar/tfenv/3.0.0/bin"
+    "$PNPM_HOME"
 )
 
 # Add all paths
@@ -252,6 +256,3 @@ export FZF_DEFAULT_OPTS='--bind ctrl-f:page-down,ctrl-b:page-up'
 # ===== PERFORMANCE DISPLAY =====
 # Uncomment to see performance results (works with zprof above)
 # zprof
-
-# Claude Code
-alias claude="/Users/jocrau/.claude/local/claude"
