@@ -46,3 +46,5 @@ keybind = super+9=unbind
 keybind = super+g=unbind
 # Cmd+Shift+W opens the herdr workspace picker (Cmd+W still closes the window)
 keybind = super+shift+w=unbind
+# Cmd+K opens the herdr-bar quick switcher (clear the screen with ctrl+l)
+keybind = super+k=unbind

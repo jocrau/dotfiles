@@ -64,3 +64,9 @@ key = "cmd+shift+a"
 type = "shell"
 command = "/Users/jocrau/.config/herdr/scripts/attach-sessions.py"
 description = "Give every unattached Claude background session its own workspace"
+
+[[keys.command]]
+key = "cmd+k"
+type = "plugin_action"
+command = "herdr-bar.open"
+description = "Quick switcher: jump to any agent, tab or workspace (herdr-bar)"
