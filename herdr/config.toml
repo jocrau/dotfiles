@@ -7,6 +7,10 @@ prompt_new_tab_name = false
 # Room for the Claude session summary line ($summary) in the Spaces sidebar
 sidebar_max_width = 48
 
+[ui.sound]
+# No sounds when agents change state in background workspaces
+enabled = false
+
 [theme]
 name = "solarized"
 auto_switch = false
