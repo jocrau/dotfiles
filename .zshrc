@@ -54,8 +54,7 @@ plugins=(
     kubectx 
     kube-ps1 
     rust 
-    npm 
-    herdr 
+    npm
 )
 
 # Lazy-load less frequently used plugins
