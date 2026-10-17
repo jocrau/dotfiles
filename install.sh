@@ -29,11 +29,17 @@ for script in "$REPO"/herdr/scripts/*; do
 done
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 
+# The repo is public: scan staged changes for secrets before every commit.
+git -C "$REPO" config core.hooksPath git-hooks
+echo "hooks   core.hooksPath -> git-hooks (gitleaks pre-commit)"
+
 cat <<EOF
 
 Not linked (do once by hand on a new machine):
   - herdr plugins:      while read p; do herdr plugin install --yes "\$p"; done < "$REPO/herdr/plugins.txt"
   - herdr-sidebar:      press s in the sidebar, turn Auto-open off and dock left
   - Claude Code hooks:  merge claude/herdr-summary-hooks.json into ~/.claude/settings.json
+  - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo
+  - Commit identity:    git -C "$REPO" config user.email <id>+<login>@users.noreply.github.com
   - Reload:             herdr server reload-config; kill -USR2 \$(pgrep -x ghostty)
 EOF

@@ -185,7 +185,6 @@ load_completions() {
 source $ZSH/oh-my-zsh.sh
 
 
-
 # Define user commands to load additional functionality on demand
 load_all_tools() {
     echo "Loading additional tools and completions..."
@@ -242,15 +241,15 @@ ghcup() {
     ghcup "$@"
 }
 
-# ===== CUSTOM FUNCTIONS =====
-
 # ===== FZF CONFIGURATION =====
 source <(fzf --zsh)
 export FZF_DEFAULT_COMMAND='fd --type f --strip-cwd-prefix --hidden --follow --exclude .git'
 export FZF_DEFAULT_OPTS='--bind ctrl-f:page-down,ctrl-b:page-up'
 
-# ===== SECRETS MANAGEMENT =====
-# Source secrets from a separate file that's not version controlled
+# ===== PRIVATE CONFIGURATION =====
+# Work-specific setup (paths, aliases, credential helpers) and secrets live in
+# files that are not version controlled: ~/.zshrc.local and ~/.zsh_secrets.
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 [ -f "$HOME/.zsh_secrets" ] && source "$HOME/.zsh_secrets"
 
 # ===== PERFORMANCE DISPLAY =====
