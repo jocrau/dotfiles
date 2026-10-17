@@ -70,3 +70,9 @@ key = "cmd+k"
 type = "plugin_action"
 command = "herdr-bar.open"
 description = "Quick switcher: jump to any agent, tab or workspace (herdr-bar)"
+
+[[keys.command]]
+key = "cmd+shift+o"
+type = "shell"
+command = "/Users/jocrau/.config/herdr/scripts/markdown.sh"
+description = "Read Markdown: pick a file in this repo, view it rendered (glow)"
