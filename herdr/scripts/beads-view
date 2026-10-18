@@ -431,6 +431,18 @@ def detail(bead_id, width=80):
             if heading:
                 lines += [f"{BOLD}{ACCENT}{heading}{RESET}"]
             lines.append(text)
+    # Comments last, oldest first, like a log. bd show only counts them.
+    if issue.get("comment_count"):
+        try:
+            comments = json.loads(bd("comments", bead_id, "--json") or "[]") or []
+        except ValueError:
+            comments = []
+        if comments:
+            lines += ["", f"{BOLD}{ACCENT}Comments{RESET}"]
+            for i, c in enumerate(sorted(comments, key=lambda c: c.get("created_at", ""))):
+                when = (c.get("created_at") or "").replace("T", " ")[:16]
+                lines += [""] if i else []
+                lines += [f"{DIM}{c.get('author', '')} · {when}{RESET}", reflow(c.get("text", ""))]
     return "\n".join(lines) + "\n"
 
 
@@ -548,19 +560,23 @@ def watch():
         try:
             state = load()
             view = render(state, fresh=True)
-            prefetch(state, budget=REFRESH_SECONDS)
         except Exception:
             continue
         digest = hashlib.sha1(view.encode()).hexdigest()
-        if digest == last:
-            continue
-        # The header too: render may have stepped up out of an emptied focus.
-        action = f"transform-header({RUN} header)+reload({RUN} render)+refresh-preview"
+        if digest != last:
+            # The header too: render may have stepped up out of an emptied focus.
+            action = f"transform-header({RUN} header)+reload({RUN} render)+refresh-preview"
+            try:
+                urllib.request.urlopen(urllib.request.Request(url, data=action.encode(), method="POST"), timeout=3)
+            except Exception:
+                return  # fzf is gone
+            last = digest
+        # After the reload, so filling the detail cache never delays (or, if it
+        # fails, blocks) an update.
         try:
-            urllib.request.urlopen(urllib.request.Request(url, data=action.encode(), method="POST"), timeout=3)
+            prefetch(state, budget=1)
         except Exception:
-            return  # fzf is gone
-        last = digest
+            pass
 
 
 RUN = f"{PY} -S {SELF}"  # how fzf's bindings call this script (-S: skip site, faster)
