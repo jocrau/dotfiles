@@ -4,7 +4,9 @@
 Shows the current repo's beads as bd's own tree (open beads by default); Enter
 shows or hides a detail pane for the selected bead. Keys (arrows and digits
 while the filter is empty): Right focuses a bead (its subtree becomes the
-view), Left or Backspace goes back up, Tab folds or unfolds a bead's
+view), or on a bead without children shows its details; Left moves to the
+parent, and on a top row of a focused view goes back up (as does Backspace),
+so repeated Lefts climb the tree. Tab folds or unfolds a bead's
 children, 1-9 folds the tree to that many levels and 0 unfolds it all, Ctrl-L
 edits the bead's labels, Ctrl-A switches between open and all beads, typing
 filters, Esc quits. The view refreshes by itself when beads change.
@@ -252,7 +254,9 @@ def preview_width():
 
 
 def render(state, fresh=False):
-    """fzf input: `ID<TAB>stamp<TAB>line`, with short IDs, fold markers and row labels."""
+    """fzf input: `ID<TAB>stamp<TAB>parent row<TAB>has children<TAB>line`, with
+    short IDs, fold markers and row labels. The parent row is the parent's
+    position in this list (empty for a top row), for Left to jump to."""
     rows = beads(state, fresh)
     # A focused bead with nothing left to show (all children closed, or gone):
     # step back up instead of showing an empty screen.
@@ -273,7 +277,7 @@ def render(state, fresh=False):
         parent = parents[depth - 1] if depth else ""
         shorts.append((parent, short_id(bead_id, parent, prefix)))
         width[parent] = max(width.get(parent, 0), len(shorts[-1][1]))
-    out, hide_below = [], None
+    out, hide_below, position = [], None, {}
     for i, (depth, bead_id, line) in enumerate(rows):
         if hide_below is not None:
             if depth > hide_below:
@@ -300,7 +304,9 @@ def render(state, fresh=False):
                 if l not in shared and matches(l, cfg["row_labels"])]
         if tags:
             suffix += f"  {DIM}{' '.join(tags)}{RESET}"
-        out.append(f"{bead_id}\t{stamp(issues.get(bead_id, {}), issues)}\t{line}{suffix}")
+        position[bead_id] = len(out) + 1
+        out.append(f"{bead_id}\t{stamp(issues.get(bead_id, {}), issues)}\t{position.get(parent, '')}"
+                   f"\t{int(has_children)}\t{line}{suffix}")
     return "\n".join(out)
 
 
@@ -587,10 +593,10 @@ def view():
     reload = f"transform-header({RUN} header)+reload({RUN} render)"
     args = [
         FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
-        "--delimiter=\t", "--with-nth=3..", "--id-nth=1", "--listen",
+        "--delimiter=\t", "--with-nth=5..", "--id-nth=1", "--listen",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
         "--footer-border=none", "--ellipsis=…",
-        "--footer=enter details · → focus · ← up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
+        "--footer=enter details · → focus · ← parent/up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
         # The cached pane when there is one (instant), else bd (and cache it).
         f"--preview=cat {shlex.quote(DETAIL_DIR)}/{{1}}@{{2}}@$FZF_PREVIEW_COLUMNS 2>/dev/null || {RUN} show {{1}} {{2}}",
         "--preview-window=right,50%,wrap-word,border-left,noinfo,hidden",
@@ -604,13 +610,18 @@ def view():
         f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render --fresh)+refresh-preview",
         "--bind=esc:abort",
     ]
-    # Arrows go into and out of a subtree while the filter is empty, and move
-    # the cursor in the filter otherwise; digits fold to a level, or are typed
-    # (so `12` still finds `.12`). transform: form, as the action has parentheses.
-    args.append(f'--bind=right:transform:[ -z {{q}} ] && echo "execute-silent({RUN} focus {{1}})'
-                f'+{reload}+first" || echo forward-char')
-    args.append(f'--bind=left:transform:[ -z {{q}} ] && echo "execute-silent({RUN} up)'
-                f'+{reload}" || echo backward-char')
+    # While the filter is empty, arrows walk the tree: Right focuses a bead with
+    # children ({4}) and shows a leaf's details; Left jumps to the parent row
+    # ({3}), and from a top row leaves the focus (--track keeps the cursor on
+    # the bead just left, so the next Left goes on to its parent). With a
+    # filter they move the cursor in it. Digits fold to a level, or are typed
+    # (so `12` still finds `.12`). transform: form, as the actions have parentheses.
+    args.append(f'--bind=right:transform:if [ -n {{q}} ]; then echo forward-char; '
+                f'elif [ {{4}} = 1 ]; then echo "execute-silent({RUN} focus {{1}})+{reload}+first"; '
+                f'else echo show-preview; fi')
+    args.append(f'--bind=left:transform:if [ -n {{q}} ]; then echo backward-char; '
+                f'elif [ -n {{3}} ]; then printf "pos(%s)" {{3}}; '
+                f'else echo "execute-silent({RUN} up)+{reload}"; fi')
     for n in range(10):
         args.append(f'--bind={n}:transform:[ -z {{q}} ] && echo "execute-silent({RUN} level {n})'
                     f'+reload({RUN} render)" || echo "put({n})"')
