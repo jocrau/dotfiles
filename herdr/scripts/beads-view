@@ -212,9 +212,16 @@ def beads(state, fresh=False):
     return rows
 
 
-def stamp(issue):
-    """Changes whenever the bead does: names its cached detail pane."""
-    return re.sub(r"\W", "", issue.get("updated_at") or "") or "0"
+def stamp(issue, issues):
+    """Changes whenever the bead's detail pane would: names its cached copy.
+
+    Not just updated_at: bd leaves that alone when labels change, or when a
+    blocker or the parent changes status or title, which the pane also shows.
+    A related bead missing from `issues` (closed, in the open view) counts too."""
+    related = [(d.get("depends_on_id"), issues.get(d.get("depends_on_id"), {}).get("status"),
+                issues.get(d.get("depends_on_id"), {}).get("title"))
+               for d in issue.get("dependencies") or []]
+    return hashlib.sha1(json.dumps([issue, related], sort_keys=True).encode()).hexdigest()[:12]
 
 
 def detail_path(bead_id, bead_stamp="", width=""):
@@ -293,7 +300,7 @@ def render(state, fresh=False):
                 if l not in shared and matches(l, cfg["row_labels"])]
         if tags:
             suffix += f"  {DIM}{' '.join(tags)}{RESET}"
-        out.append(f"{bead_id}\t{stamp(issues.get(bead_id, {}))}\t{line}{suffix}")
+        out.append(f"{bead_id}\t{stamp(issues.get(bead_id, {}), issues)}\t{line}{suffix}")
     return "\n".join(out)
 
 
@@ -509,9 +516,10 @@ def prefetch(state, budget):
     """Cache the detail panes of the view's beads, for up to `budget` seconds;
     drop the ones that are out of date."""
     deadline = time.monotonic() + budget
-    for issue in fetch(state)[1]:
-        path = detail_path(issue["id"], stamp(issue), preview_width())
-        current = detail_path(issue["id"], stamp(issue))  # this version, any width
+    issues = {i["id"]: i for i in fetch(state)[1]}
+    for issue in issues.values():
+        path = detail_path(issue["id"], stamp(issue, issues), preview_width())
+        current = detail_path(issue["id"], stamp(issue, issues))  # this version, any width
         for old in glob.glob(glob.escape(detail_path(issue["id"])) + "*"):
             if not old.startswith(current):
                 try:
@@ -519,7 +527,7 @@ def prefetch(state, budget):
                 except OSError:
                     pass
         if not os.path.exists(path) and time.monotonic() < deadline:
-            cached_detail(issue["id"], stamp(issue))
+            cached_detail(issue["id"], stamp(issue, issues))
 
 
 def watch():
