@@ -4,12 +4,13 @@
 Shows bd's own tree for the current repo (open beads by default) with a
 `bd show` detail pane. Keys: Enter focuses the selected bead (its subtree
 becomes the view), Backspace on an empty query goes back up, Tab folds or
-unfolds a bead's children, Ctrl-A switches between open and all beads,
-typing filters, Esc quits. The view refreshes by itself when beads change.
+unfolds a bead's children, Ctrl-L edits the selected bead's labels (to
+steer agent-fleet), Ctrl-A switches between open and all beads, typing
+filters, Esc quits. Labels show after each bead's ID. The view refreshes by itself when beads change.
 
 Focus, folds and the open/all choice are remembered per repo in
 ~/.local/state/beads-view/. Subcommands (render, header, toggle, focus, up,
-all, show, watch) are called by fzf's key bindings; run without arguments to
+all, show, labels, watch) are called by fzf's key bindings; run without arguments to
 start the view. Standard library only; needs bd and fzf on the paths below.
 """
 import hashlib
@@ -77,24 +78,45 @@ def bd(*args):
     return out.stdout
 
 
-def beads(state):
-    """(depth, id, line) for every bead line bd prints for the current view."""
+def list_args(state):
     args = ["list", "--limit", "0"]
     if state["all"]:
         args.append("--all")
     if state["stack"]:
         args += ["--parent", state["stack"][-1]]
+    return args
+
+
+def beads(state):
+    """(depth, id, line) for every bead line bd prints for the current view."""
     rows = []
-    for line in bd(*args).splitlines():
+    for line in bd(*list_args(state)).splitlines():
         m = BEAD.match(ANSI.sub("", line))
         if m:
             rows.append((len(m.group("prefix")) // 4, m.group("id"), line))
     return rows
 
 
+def labels_by_id(state):
+    """{bead id: [labels]} for the current view."""
+    try:
+        issues = json.loads(bd(*list_args(state), "--json") or "[]")
+    except ValueError:
+        return {}
+    return {i["id"]: sorted(i.get("labels") or []) for i in issues if "id" in i}
+
+
+def label_tags(labels):
+    """Dimmed `#label` tags; fleet-owned `fleet:<step>` labels dimmer still."""
+    tags = [f"{DIM}{'#' + l}{RESET}" for l in labels if not l.startswith("fleet:")]
+    tags += [f"{DIM}\x1b[3m#{l}{RESET}" for l in labels if l.startswith("fleet:")]
+    return " ".join(tags)
+
+
 def render(state):
     """fzf input: `ID<TAB>line`, with fold markers and folded subtrees removed."""
     rows = beads(state)
+    labels = labels_by_id(state)
     collapsed = set(state["collapsed"])
     out, hide_below = [], None
     for i, (depth, bead_id, line) in enumerate(rows):
@@ -116,8 +138,64 @@ def render(state):
         else:
             marker, suffix = "  ", ""
         line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1) + suffix
+        if labels.get(bead_id):  # right after the ID, so long titles can't hide them
+            line = line.replace(bead_id, f"{bead_id} {label_tags(labels[bead_id])}", 1)
         out.append(f"{bead_id}\t{line}")
     return "\n".join(out)
+
+
+# Labels a person sets to steer agent-fleet (see the plugin README's Labels);
+# `fleet:<step>` labels belong to the fleet and are never offered or touched.
+STEERING_LABELS = ["fleet", "owner:jochen", "contract", "kind:planning", "kind:docs", "risk:high"]
+
+
+def edit_labels(bead_id):
+    """Multi-select the bead's labels in fzf; apply the difference with bd."""
+    try:
+        issue = json.loads(bd("show", bead_id, "--json") or "[]")
+        issue = issue[0] if isinstance(issue, list) else issue
+        current = sorted(issue.get("labels") or [])
+        used = [entry["label"] for entry in json.loads(bd("label", "list-all", "--json") or "[]")]
+    except (ValueError, KeyError, IndexError):
+        return
+    editable = [l for l in current if not l.startswith("fleet:")]
+    others = [l for l in dict.fromkeys(STEERING_LABELS + sorted(used))
+              if l not in editable and not l.startswith("fleet:")]
+    choices = editable + others
+    preselect = "+".join(f"pos({i})+select" for i in range(1, len(editable) + 1))
+    args = [
+        FZF, "--multi", "--layout=reverse", "--no-sort", "--print-query",
+        "--border=rounded", f"--border-label= labels · {bead_id} ",
+        "--prompt=new label › ", "--marker=✓ ", "--info=inline-right",
+        "--header=tab toggles · type a new label · enter applies · esc cancels",
+        # load, not start: the rows must be in before they can be ticked.
+        f"--bind=load:{preselect}+first" if preselect else "--bind=load:first",
+        # With nothing ticked fzf returns the row under the cursor; mark that
+        # case so unticking everything removes every label.
+        # (transform: form, because the command itself contains parentheses.)
+        '--bind=enter:transform:[ "$FZF_SELECT_COUNT" -eq 0 ] && echo "print(<none>)+accept" || echo accept',
+    ]
+    proc = subprocess.run(args, input="\n".join(choices), text=True, capture_output=False,
+                          stdout=subprocess.PIPE)
+    if proc.returncode not in (0, 1):  # Esc or an error: change nothing
+        return
+    lines = proc.stdout.split("\n")
+    query, picked = lines[0].strip(), [l for l in lines[1:] if l]
+    wanted = set() if "<none>" in picked else set(picked)
+    # The typed text adds a label when it names one exactly or is new; text
+    # that only narrows the list (part of an existing label) adds nothing.
+    if query and not query.startswith("fleet:"):
+        if query in choices or not any(query.lower() in c.lower() for c in choices):
+            wanted.add(query)
+    add, remove = sorted(wanted - set(editable)), sorted(set(editable) - wanted)
+    if not add and not remove:
+        return
+    cmd = ["update", bead_id]
+    for label in add:
+        cmd += ["--add-label", label]
+    for label in remove:
+        cmd += ["--remove-label", label]
+    subprocess.run([BD, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
 
 
 def header(state):
@@ -154,7 +232,7 @@ def watch():
 def view():
     # The header changes before the (asynchronous) reload; after it, fzf drops it.
     reload = f"transform-header({SELF} header)+reload({SELF} render)"
-    footer = "enter focus · ⌫ up · tab fold · ctrl-a open/all · type to filter · esc quit"
+    footer = "enter focus · ⌫ up · tab fold · ctrl-l labels · ctrl-a open/all · type to filter · esc quit"
     legend = "○ open  ◐ in progress  ● blocked  ✓ closed  ❄ deferred"
     args = [
         FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
@@ -169,6 +247,7 @@ def view():
         f"--bind=double-click:execute-silent({SELF} focus {{1}})+{reload}+first",
         f"--bind=backward-eof:execute-silent({SELF} up)+{reload}",
         f"--bind=ctrl-a:execute-silent({SELF} all)+{reload}",
+        f"--bind=ctrl-l:execute({SELF} labels {{1}})+reload({SELF} render)+refresh-preview",
         "--bind=esc:abort",
     ]
     proc = subprocess.run(args, input=render(load()), text=True, cwd=ROOT)
@@ -203,6 +282,8 @@ def main(argv):
     elif cmd == "all":
         state["all"] = not state["all"]
         save(state)
+    elif cmd == "labels" and rest:
+        edit_labels(rest[0])
     elif cmd == "watch":
         watch()
     else:
