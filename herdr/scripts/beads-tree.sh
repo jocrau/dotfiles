@@ -1,11 +1,11 @@
 #!/bin/sh
-# Toggle a full-tab beads browser (b9s: live tree, epic focus with x, detail,
-# search) for the focused pane's repo, showing open (not closed) beads: splits
-# the focused pane and zooms the new pane. Quitting b9s closes the pane too.
+# Toggle a full-tab beads view (beads-view: bd's tree with fold, focus, a
+# detail pane and live refresh) for the focused pane's repo: splits the focused
+# pane and zooms the new pane. Quitting the view closes the pane too.
 # Only panes opened by this script are tracked/closed.
 HERDR=/opt/homebrew/bin/herdr
 JQ=/opt/homebrew/bin/jq
-B9S=/opt/homebrew/bin/b9s
+VIEW="$HOME/.config/herdr/scripts/beads-view"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/beads-tree-panes"
 mkdir -p "$(dirname "$STATE")" && touch "$STATE"
 
@@ -47,16 +47,7 @@ while [ $i -lt 30 ]; do
   "$HERDR" pane read "$new" --source visible 2>/dev/null | grep -q '[^[:space:]]' && break
   sleep 0.1; i=$((i + 1))
 done
-# Quitting b9s closes the pane; if b9s fails, the pane waits so the error
+# Quitting the view closes the pane; if it fails, the pane waits so the error
 # stays readable. (Typed into the pane's zsh, hence zsh's read syntax.)
-"$HERDR" pane run "$new" "$B9S || read '?b9s failed. Press Enter to close.'; exit" >/dev/null
+"$HERDR" pane run "$new" "$VIEW || read '?beads-view failed. Press Enter to close.'; exit" >/dev/null
 "$HERDR" pane zoom "$new" --on >/dev/null
-
-# b9s has no setting for the startup status filter, so once its header has
-# drawn, press o (show open issues: everything but closed).
-i=0
-while [ $i -lt 50 ]; do
-  "$HERDR" pane read "$new" --source visible 2>/dev/null | grep -q 'Issue \[' && break
-  sleep 0.1; i=$((i + 1))
-done
-"$HERDR" pane send-text "$new" o >/dev/null

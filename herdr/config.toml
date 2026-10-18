@@ -40,7 +40,7 @@ description = "Toggle file explorer / source control sidebar"
 key = "cmd+b"
 type = "shell"
 command = "/Users/jocrau/.config/herdr/scripts/beads-tree.sh"
-description = "Toggle full-tab beads browser (b9s, open beads)"
+description = "Toggle full-tab beads view (beads-view: tree, fold, focus, detail)"
 
 [[keys.command]]
 key = "cmd+g"

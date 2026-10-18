@@ -1,0 +1,213 @@
+#!/usr/bin/python3 -I
+"""beads-view: `bd list --watch`, made interactive with fzf.
+
+Shows bd's own tree for the current repo (open beads by default) with a
+`bd show` detail pane. Keys: Enter focuses the selected bead (its subtree
+becomes the view), Backspace on an empty query goes back up, Tab folds or
+unfolds a bead's children, Ctrl-A switches between open and all beads,
+typing filters, Esc quits. The view refreshes by itself when beads change.
+
+Focus, folds and the open/all choice are remembered per repo in
+~/.local/state/beads-view/. Subcommands (render, header, toggle, focus, up,
+all, show, watch) are called by fzf's key bindings; run without arguments to
+start the view. Standard library only; needs bd and fzf on the paths below.
+"""
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+
+BD = "/opt/homebrew/bin/bd"
+FZF = "/opt/homebrew/bin/fzf"
+SELF = os.path.realpath(__file__)
+REFRESH_SECONDS = 2
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# A bead line in `bd list`: tree prefix, status symbol, ID.
+BEAD = re.compile(r"^(?P<prefix>(?:│   |    )*(?:├── |└── )?)(?P<sym>[○◐●✓❄]) (?P<id>\S+)")
+DIM, RESET = "\x1b[2m", "\x1b[0m"
+COLOR_ENV = dict(os.environ, CLICOLOR_FORCE="1")
+
+
+def repo_root():
+    """The nearest folder with a .beads directory, else the current folder."""
+    here = os.getcwd()
+    path = here
+    while path != os.path.dirname(path):
+        if os.path.isdir(os.path.join(path, ".beads")):
+            return path
+        path = os.path.dirname(path)
+    return here
+
+
+ROOT = repo_root()
+STATE_FILE = os.path.join(
+    os.path.expanduser("~/.local/state/beads-view"),
+    hashlib.sha1(ROOT.encode()).hexdigest()[:12] + ".json",
+)
+
+
+def load():
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    state.setdefault("stack", [])      # focused bead IDs, outermost first
+    state.setdefault("collapsed", [])  # bead IDs whose children are folded
+    state.setdefault("all", False)     # include closed beads
+    return state
+
+
+def save(state):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def bd(*args):
+    out = subprocess.run([BD, *args], cwd=ROOT, env=COLOR_ENV,
+                         capture_output=True, text=True, timeout=20)
+    return out.stdout
+
+
+def beads(state):
+    """(depth, id, line) for every bead line bd prints for the current view."""
+    args = ["list", "--limit", "0"]
+    if state["all"]:
+        args.append("--all")
+    if state["stack"]:
+        args += ["--parent", state["stack"][-1]]
+    rows = []
+    for line in bd(*args).splitlines():
+        m = BEAD.match(ANSI.sub("", line))
+        if m:
+            rows.append((len(m.group("prefix")) // 4, m.group("id"), line))
+    return rows
+
+
+def render(state):
+    """fzf input: `ID<TAB>line`, with fold markers and folded subtrees removed."""
+    rows = beads(state)
+    collapsed = set(state["collapsed"])
+    out, hide_below = [], None
+    for i, (depth, bead_id, line) in enumerate(rows):
+        if hide_below is not None:
+            if depth > hide_below:
+                continue
+            hide_below = None
+        has_children = i + 1 < len(rows) and rows[i + 1][0] > depth
+        sym = BEAD.match(ANSI.sub("", line)).group("sym")
+        if has_children and bead_id in collapsed:
+            hidden = 0
+            for later_depth, _, _ in rows[i + 1:]:
+                if later_depth <= depth:
+                    break
+                hidden += 1
+            marker, suffix, hide_below = "▸ ", f"  {DIM}(+{hidden}){RESET}", depth
+        elif has_children:
+            marker, suffix = "▾ ", ""
+        else:
+            marker, suffix = "  ", ""
+        line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1) + suffix
+        out.append(f"{bead_id}\t{line}")
+    return "\n".join(out)
+
+
+def header(state):
+    where = " › ".join([os.path.basename(ROOT)] + state["stack"])
+    scope = "all beads" if state["all"] else "open beads"
+    return f"{where}   {DIM}{scope}{RESET}"
+
+
+def watch():
+    """Reload fzf (via --listen) whenever the rendered view changes."""
+    url = f"http://127.0.0.1:{os.environ['FZF_PORT']}"
+    last = None
+    while True:
+        time.sleep(REFRESH_SECONDS)
+        try:  # exit as soon as fzf is gone, even when nothing changes
+            urllib.request.urlopen(url, timeout=3).read()
+        except Exception:
+            return
+        try:
+            view = render(load())
+        except Exception:
+            continue
+        digest = hashlib.sha1(view.encode()).hexdigest()
+        if digest == last:
+            continue
+        action = f"reload({SELF} render)+refresh-preview"
+        try:
+            urllib.request.urlopen(urllib.request.Request(url, data=action.encode(), method="POST"), timeout=3)
+        except Exception:
+            return  # fzf is gone
+        last = digest
+
+
+def view():
+    # The header changes before the (asynchronous) reload; after it, fzf drops it.
+    reload = f"transform-header({SELF} header)+reload({SELF} render)"
+    footer = "enter focus · ⌫ up · tab fold · ctrl-a open/all · type to filter · esc quit"
+    legend = "○ open  ◐ in progress  ● blocked  ✓ closed  ❄ deferred"
+    args = [
+        FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
+        "--delimiter=\t", "--with-nth=2..", "--id-nth=1",
+        "--listen", "--border=rounded", "--border-label= beads ",
+        "--info=inline-right", "--prompt=filter › ",
+        f"--footer={footer}\n{legend}",
+        f"--preview={SELF} show {{1}}", "--preview-window=right,45%,wrap,border-left",
+        f"--bind=start:execute-silent({SELF} watch >/dev/null 2>&1 &)+transform-header({SELF} header)",
+        f"--bind=tab:execute-silent({SELF} toggle {{1}})+reload({SELF} render)",
+        f"--bind=enter:execute-silent({SELF} focus {{1}})+{reload}+first",
+        f"--bind=double-click:execute-silent({SELF} focus {{1}})+{reload}+first",
+        f"--bind=backward-eof:execute-silent({SELF} up)+{reload}",
+        f"--bind=ctrl-a:execute-silent({SELF} all)+{reload}",
+        "--bind=esc:abort",
+    ]
+    proc = subprocess.run(args, input=render(load()), text=True, cwd=ROOT)
+    sys.exit(0 if proc.returncode in (0, 1, 130) else proc.returncode)
+
+
+def main(argv):
+    if not argv:
+        return view()
+    cmd, rest = argv[0], argv[1:]
+    state = load()
+    if cmd == "render":
+        print(render(state))
+    elif cmd == "header":
+        print(header(state))
+    elif cmd == "show" and rest:
+        sys.stdout.write(bd("show", rest[0]))
+    elif cmd == "toggle" and rest:
+        folded = set(state["collapsed"]) ^ {rest[0]}
+        state["collapsed"] = sorted(folded)
+        save(state)
+    elif cmd == "focus" and rest:
+        if not state["stack"] or state["stack"][-1] != rest[0]:
+            state["stack"].append(rest[0])
+        # A focused bead shows its children, even if it was folded.
+        state["collapsed"] = [b for b in state["collapsed"] if b != rest[0]]
+        save(state)
+    elif cmd == "up":
+        if state["stack"]:
+            state["stack"].pop()
+        save(state)
+    elif cmd == "all":
+        state["all"] = not state["all"]
+        save(state)
+    elif cmd == "watch":
+        watch()
+    else:
+        sys.exit(f"beads-view: unknown command {cmd!r}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
