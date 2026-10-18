@@ -48,7 +48,7 @@ REFRESH_SECONDS = 2
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # A bead line in `bd list`: tree prefix, status symbol, ID.
 BEAD = re.compile(r"^(?P<prefix>(?:│   |    )*(?:├── |└── )?)(?P<sym>[○◐●✓❄]) (?P<id>\S+)")
-DIM, BOLD, RESET = "\x1b[2m", "\x1b[1m", "\x1b[0m"
+DIM, BOLD, ACCENT, RESET = "\x1b[2m", "\x1b[1m", "\x1b[36m", "\x1b[0m"
 COLOR_ENV = dict(os.environ, CLICOLOR_FORCE="1")
 STATUS_SYMBOL = {"open": "○", "in_progress": "◐", "blocked": "●", "closed": "✓", "deferred": "❄"}
 
@@ -219,22 +219,45 @@ def header(state):
     return f"{BOLD}{where}{RESET}  {DIM}{'all' if state['all'] else 'open'}{RESET}"
 
 
+BLOCK_LINE = re.compile(r"\s*([-*+]\s|\d+[.)]\s|\||#|>|```)")  # list, table, heading, quote, code
+DATED_LINE = re.compile(r"\s*\d{4}-\d{2}-\d{2}\b")              # a dated log entry
+HEADING_LINE = re.compile(r"^[A-Z][A-Z0-9 /&-]{1,40}:?$")         # a short ALL-CAPS line
+
+
 def reflow(text):
-    """Join hard-wrapped lines into paragraphs; keep lists, tables, code."""
+    """Join hard-wrapped lines into paragraphs; keep lists, tables, code.
+
+    A dated line (`2026-10-04 …`) starts a new paragraph, so log-style notes
+    stay one entry per paragraph; a short ALL-CAPS line becomes a heading."""
     out, in_code = [], False
-    block = re.compile(r"\s*([-*+]\s|\d+[.)]\s|\||#|>|```)")
+
+    def new_paragraph():
+        if out and out[-1].strip():
+            out.append("")
+
     for raw in (text or "").splitlines():
         line = raw.rstrip()
         if line.strip().startswith("```"):
             in_code = not in_code
+            out.append(f"{DIM}{line}{RESET}")
+            continue
+        if in_code:
             out.append(line)
             continue
-        if in_code or not line.strip():
-            if not (not line.strip() and out and not out[-1].strip()):
-                out.append(line)
+        if not line.strip():
+            new_paragraph()
+            continue
+        if HEADING_LINE.match(line.strip()):
+            new_paragraph()
+            out.append(f"{BOLD}{line.strip().rstrip(':')}{RESET}")
+            continue
+        if DATED_LINE.match(line):
+            new_paragraph()
+            out.append(line.strip())
             continue
         prev = out[-1] if out else ""
-        if prev.strip() and not block.match(line) and not prev.strip().startswith(("|", "#", "```")):
+        if prev.strip() and not BLOCK_LINE.match(line) and not prev.startswith((BOLD, DIM)) \
+                and not prev.strip().startswith(("|", "#")):
             out[-1] = prev + " " + line.strip()
         else:
             out.append(line)
@@ -249,27 +272,31 @@ def detail(bead_id):
     except (ValueError, IndexError):
         return bd("show", bead_id)
     status = issue.get("status", "")
-    # Full IDs here: this pane shows one bead out of the tree's context.
+    deps = issue.get("dependencies") or []
+    # Title first; then one dim line of facts with the full ID (this pane shows
+    # one bead out of the tree's context), the parent with its title, labels.
     lines = [
-        f"{BOLD}{bead_id}{RESET}  {STATUS_SYMBOL.get(status, '')} {status}"
-        f"  {DIM}P{issue.get('priority', '')} · {issue.get('issue_type', '')}{RESET}",
         f"{BOLD}{issue.get('title', '')}{RESET}",
+        f"{DIM}{bead_id} · {RESET}{STATUS_SYMBOL.get(status, '')} {status.replace('_', ' ')}"
+        f"{DIM} · P{issue.get('priority', '')} · {issue.get('issue_type', '')}{RESET}",
     ]
-    if issue.get("labels"):
-        lines.append(DIM + " ".join(f"#{l}" for l in sorted(issue["labels"])) + RESET)
+    parent = next((d for d in deps if d.get("dependency_type") == "parent-child"), None)
     if issue.get("parent"):
-        lines.append(f"{DIM}↑ {issue['parent']}{RESET}")
-    for dep in issue.get("dependencies") or []:
+        title = parent.get("title", "") if parent and parent.get("id") == issue["parent"] else ""
+        lines.append(f"{DIM}↑ {issue['parent']}  {title}{RESET}")
+    for dep in deps:
         if dep.get("dependency_type") not in ("parent-child", None):
-            lines.append(f"{DIM}{dep['dependency_type']}: {dep['id']}"
-                         f" {STATUS_SYMBOL.get(dep.get('status', ''), '')} {dep.get('title', '')}{RESET}")
-    for key, title in (("description", ""), ("design", "Design"),
-                       ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
+            lines.append(f"{DIM}{dep['dependency_type'].replace('-', ' ')}: {dep['id']}  "
+                         f"{STATUS_SYMBOL.get(dep.get('status', ''), '')} {dep.get('title', '')}{RESET}")
+    if issue.get("labels"):
+        lines.append(DIM + "  ".join(f"#{l}" for l in sorted(issue["labels"])) + RESET)
+    for key, heading in (("description", ""), ("design", "Design"),
+                         ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
         text = reflow(issue.get(key, ""))
         if text:
             lines.append("")
-            if title:
-                lines.append(f"{DIM}{title}{RESET}")
+            if heading:
+                lines += [f"{BOLD}{ACCENT}{heading}{RESET}"]
             lines.append(text)
     return "\n".join(lines) + "\n"
 
@@ -373,7 +400,7 @@ def view():
         "--footer-border=none", "--ellipsis=…",
         "--footer=enter focus · ⌫ up · tab fold · ctrl-l labels · ctrl-a open/all · esc quit",
         f"--preview={RUN} show {{1}}", "--preview-window=right,50%,wrap-word,border-left,noinfo",
-        "--preview-wrap-sign= ",
+        "--preview-wrap-sign=",
         f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
         f"--bind=tab:execute-silent({RUN} toggle {{1}})+reload({RUN} render)",
         f"--bind=enter:execute-silent({RUN} focus {{1}})+{reload}+first",
