@@ -4,9 +4,10 @@
 Shows the current repo's beads as bd's own tree (open beads by default) with a
 detail pane for the selected bead. Keys: Enter focuses a bead (its subtree
 becomes the view), Backspace on an empty query goes back up, Tab folds or
-unfolds a bead's children, Ctrl-L edits the bead's labels, Ctrl-A switches
-between open and all beads, typing filters, Esc quits. The view refreshes by
-itself when beads change.
+unfolds a bead's children, 1-9 (with an empty filter) folds the tree to that
+many levels and 0 unfolds it all, Ctrl-L edits the bead's labels, Ctrl-A
+switches between open and all beads, typing filters, Esc quits. The view
+refreshes by itself when beads change.
 
 IDs are shown relative to their parent (`proj-erd.12.18` under `proj-erd.12`
 shows as `.18`; at the top the repo's issue prefix is dropped). Rows end with
@@ -18,8 +19,8 @@ Optional settings in ~/.config/beads-view/config.json (all keys optional):
   "suggested_labels": extra labels Ctrl-L offers                  (default [])
 
 Focus, folds and the open/all choice are remembered per repo in
-~/.local/state/beads-view/. Subcommands (render, header, toggle, focus, up,
-all, show, labels, watch) are called by fzf's key bindings; run without
+~/.local/state/beads-view/. Subcommands (render, header, toggle, level, focus,
+up, all, show, labels, watch) are called by fzf's key bindings; run without
 arguments to start the view. Needs python3, bd and fzf (0.60 or later).
 """
 import fnmatch
@@ -398,7 +399,7 @@ def view():
         "--delimiter=\t", "--with-nth=2..", "--id-nth=1", "--listen",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
         "--footer-border=none", "--ellipsis=…",
-        "--footer=enter focus · ⌫ up · tab fold · ctrl-l labels · ctrl-a open/all · esc quit",
+        "--footer=enter focus · ⌫ up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
         f"--preview={RUN} show {{1}}", "--preview-window=right,50%,wrap-word,border-left,noinfo",
         "--preview-wrap-sign=",
         f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
@@ -410,6 +411,11 @@ def view():
         f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render)+refresh-preview",
         "--bind=esc:abort",
     ]
+    # Digits fold to a level while the filter is empty, and are typed otherwise
+    # (so `12` still finds `.12`). transform: form, as the action has parentheses.
+    for n in range(10):
+        args.append(f'--bind={n}:transform:[ -z {{q}} ] && echo "execute-silent({RUN} level {n})'
+                    f'+reload({RUN} render)" || echo "put({n})"')
     proc = subprocess.run(args, input=render(load()), text=True, cwd=ROOT)
     sys.exit(0 if proc.returncode in (0, 1, 130) else proc.returncode)
 
@@ -430,6 +436,16 @@ def main(argv):
         sys.stdout.write(detail(rest[0]))
     elif cmd == "toggle" and rest:
         state["collapsed"] = sorted(set(state["collapsed"]) ^ {rest[0]})
+        save(state)
+    elif cmd == "level" and rest and rest[0].isdigit():
+        # Show N levels of the current view (level 1 = its top rows): fold every
+        # bead at level N or deeper that has children; 0 unfolds the view.
+        # Folds of beads outside the view are kept.
+        n, rows = int(rest[0]), beads(state)
+        in_view = {bead_id for _, bead_id, _ in rows}
+        parents = {rows[i][1] for i in range(len(rows) - 1) if rows[i + 1][0] > rows[i][0]}
+        folded = {bead_id for depth, bead_id, _ in rows if n and depth >= n - 1 and bead_id in parents}
+        state["collapsed"] = sorted((set(state["collapsed"]) - in_view) | folded)
         save(state)
     elif cmd == "focus" and rest:
         # Only a bead with children becomes the view; a leaf (or an empty
