@@ -120,12 +120,21 @@ def issue_prefix():
 
 
 def short_id(bead_id, parent, prefix):
-    """`proj-erd.12.18` -> `.18` under `proj-erd.12`, else `erd.12.18`."""
-    if parent and bead_id.startswith(parent + "."):
-        return bead_id[len(parent):]
+    """The ID relative to its parent: `.18` for `proj-erd.12.18` under
+    `proj-erd.12`, `-sessionbd` for `x-r7-sessionbd` under `x-r7`. Without such
+    a parent, the repo's issue prefix is dropped: `erd.12.18`."""
+    for sep in (".", "-"):
+        if parent and bead_id.startswith(parent + sep):
+            return bead_id[len(parent):]
     if prefix and bead_id.startswith(prefix + "-"):
         return bead_id[len(prefix) + 1:]
     return bead_id
+
+
+def has_children(bead_id, state):
+    """Whether the bead has children in the current open/all view."""
+    probe = dict(state, stack=state["stack"] + [bead_id])
+    return any(depth > 0 for depth, _, _ in beads(probe))
 
 
 def list_args(state):
@@ -158,7 +167,14 @@ def labels_by_id(state):
 
 def render(state):
     """fzf input: `ID<TAB>line`, with short IDs, fold markers and row labels."""
-    rows, labels, cfg, prefix = beads(state), labels_by_id(state), config(), issue_prefix()
+    rows = beads(state)
+    # A focused bead with nothing left to show (all children closed, or gone):
+    # step back up instead of showing an empty screen.
+    while state["stack"] and not rows:
+        state["stack"].pop()
+        save(state)
+        rows = beads(state)
+    labels, cfg, prefix = labels_by_id(state), config(), issue_prefix()
     collapsed = set(state["collapsed"])
     shared = set.intersection(*(set(labels.get(r[1], [])) for r in rows)) if len(rows) > 1 else set()
     out, hide_below, parents = [], None, []
@@ -232,20 +248,20 @@ def detail(bead_id):
         issue = issue[0] if isinstance(issue, list) else issue
     except (ValueError, IndexError):
         return bd("show", bead_id)
-    prefix = issue_prefix()
     status = issue.get("status", "")
+    # Full IDs here: this pane shows one bead out of the tree's context.
     lines = [
-        f"{BOLD}{short_id(bead_id, '', prefix)}{RESET}  {STATUS_SYMBOL.get(status, '')} {status}"
+        f"{BOLD}{bead_id}{RESET}  {STATUS_SYMBOL.get(status, '')} {status}"
         f"  {DIM}P{issue.get('priority', '')} · {issue.get('issue_type', '')}{RESET}",
         f"{BOLD}{issue.get('title', '')}{RESET}",
     ]
     if issue.get("labels"):
         lines.append(DIM + " ".join(f"#{l}" for l in sorted(issue["labels"])) + RESET)
     if issue.get("parent"):
-        lines.append(f"{DIM}↑ {short_id(issue['parent'], '', prefix)}{RESET}")
+        lines.append(f"{DIM}↑ {issue['parent']}{RESET}")
     for dep in issue.get("dependencies") or []:
         if dep.get("dependency_type") not in ("parent-child", None):
-            lines.append(f"{DIM}{dep['dependency_type']}: {short_id(dep['id'], '', prefix)}"
+            lines.append(f"{DIM}{dep['dependency_type']}: {dep['id']}"
                          f" {STATUS_SYMBOL.get(dep.get('status', ''), '')} {dep.get('title', '')}{RESET}")
     for key, title in (("description", ""), ("design", "Design"),
                        ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
@@ -269,16 +285,24 @@ def edit_labels(bead_id):
     except (ValueError, KeyError, IndexError):
         return
     readonly = cfg["readonly_labels"]
-    editable = [l for l in current if not matches(l, readonly)]
-    others = [l for l in dict.fromkeys(cfg["suggested_labels"] + sorted(used))
-              if l not in editable and not matches(l, readonly)]
+
+    def grouped(labels):  # plain labels first, then by namespace (`owner:…`)
+        return sorted(labels, key=lambda l: (":" in l, l.split(":", 1)[0] if ":" in l else "", l))
+
+    def shown(label):  # the namespace dimmed, so each group reads as a block
+        ns, sep, rest = label.partition(":")
+        return f"{DIM}{ns}:{RESET}{rest}" if sep else label
+
+    editable = grouped(l for l in current if not matches(l, readonly))
+    others = grouped(set(cfg["suggested_labels"] + used) - set(editable) - {""}
+                     - {l for l in cfg["suggested_labels"] + used if matches(l, readonly)})
     choices = editable + others
     preselect = "+".join(f"pos({i})+select" for i in range(1, len(editable) + 1))
     args = [
-        FZF, "--multi", "--layout=reverse", "--no-sort", "--print-query",
+        FZF, "--multi", "--ansi", "--layout=reverse", "--no-sort", "--print-query",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--marker=✓ ", "--info=hidden",
         "--footer-border=none",
-        f"--prompt={short_id(bead_id, '', issue_prefix())} labels › ",
+        f"--prompt={bead_id} labels › ",
         "--footer=tab toggles · type a new label · enter applies · esc cancels",
         # load, not start: the rows must be in before they can be ticked.
         f"--bind=load:{preselect}+first" if preselect else "--bind=load:first",
@@ -287,11 +311,12 @@ def edit_labels(bead_id):
         # because the command itself contains parentheses.)
         '--bind=enter:transform:[ "$FZF_SELECT_COUNT" -eq 0 ] && echo "print(<none>)+accept" || echo accept',
     ]
-    proc = subprocess.run(args, input="\n".join(choices), text=True, stdout=subprocess.PIPE)
+    proc = subprocess.run(args, input="\n".join(shown(c) for c in choices), text=True,
+                          stdout=subprocess.PIPE)
     if proc.returncode not in (0, 1):  # Esc or an error: change nothing
         return
     lines = proc.stdout.split("\n")
-    query, picked = lines[0].strip(), [l for l in lines[1:] if l]
+    query, picked = lines[0].strip(), [ANSI.sub("", l) for l in lines[1:] if l]
     wanted = set() if "<none>" in picked else set(picked)
     # The typed text adds a label when it names one exactly or is new; text
     # that only narrows the list (part of an existing label) adds nothing.
@@ -326,7 +351,8 @@ def watch():
         digest = hashlib.sha1(view.encode()).hexdigest()
         if digest == last:
             continue
-        action = f"reload({RUN} render)+refresh-preview"
+        # The header too: render may have stepped up out of an emptied focus.
+        action = f"transform-header({RUN} header)+reload({RUN} render)+refresh-preview"
         try:
             urllib.request.urlopen(urllib.request.Request(url, data=action.encode(), method="POST"), timeout=3)
         except Exception:
@@ -373,12 +399,16 @@ def main(argv):
         print(render(state))
     elif cmd == "header":
         print(header(state))
-    elif cmd == "show" and rest:
+    elif cmd == "show" and rest and rest[0]:
         sys.stdout.write(detail(rest[0]))
     elif cmd == "toggle" and rest:
         state["collapsed"] = sorted(set(state["collapsed"]) ^ {rest[0]})
         save(state)
     elif cmd == "focus" and rest:
+        # Only a bead with children becomes the view; a leaf (or an empty
+        # list's blank row) would leave an empty screen.
+        if not rest[0] or not has_children(rest[0], state):
+            return
         if not state["stack"] or state["stack"][-1] != rest[0]:
             state["stack"].append(rest[0])
         # A focused bead shows its children, even if it was folded.
