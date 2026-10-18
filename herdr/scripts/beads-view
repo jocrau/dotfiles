@@ -269,14 +269,24 @@ def render(state, fresh=False):
     cfg, prefix = config(), issue_prefix()
     collapsed = set(state["collapsed"])
     shared = set.intersection(*(set(labels.get(r[1], [])) for r in rows)) if len(rows) > 1 else set()
-    # Short IDs, padded to the longest among their siblings: siblings share the
-    # tree indent, so their priorities and titles line up.
-    shorts, width, parents = [], {}, []
-    for depth, bead_id, _ in rows:
+    # Short IDs, padded so the priorities and titles of all visible rows start
+    # in one column: the one 90% of them reach, so a single long ID or a deep
+    # branch doesn't push every row to the right (wider rows just overflow).
+    # A row's ID ends at its depth's tree indent (4 per level), the fold marker
+    # and status symbol (4), plus the short ID.
+    shorts, ends, parents, hide_below = [], [], [], None
+    for i, (depth, bead_id, _) in enumerate(rows):
         parents[depth:] = [bead_id]
         parent = parents[depth - 1] if depth else ""
         shorts.append((parent, short_id(bead_id, parent, prefix)))
-        width[parent] = max(width.get(parent, 0), len(shorts[-1][1]))
+        if hide_below is not None and depth > hide_below:
+            continue
+        hide_below = None
+        if bead_id in collapsed and i + 1 < len(rows) and rows[i + 1][0] > depth:
+            hide_below = depth
+        ends.append(depth * 4 + 4 + len(shorts[-1][1]))
+    ends.sort()
+    column = ends[max(-(-len(ends) * 9 // 10) - 1, 0)] if ends else 0
     out, hide_below, position = [], None, {}
     for i, (depth, bead_id, line) in enumerate(rows):
         if hide_below is not None:
@@ -299,7 +309,7 @@ def render(state, fresh=False):
             marker = "  "
         parent, short = shorts[i]
         line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1)
-        line = line.replace(bead_id, short.ljust(width[parent]), 1)
+        line = line.replace(bead_id, short.ljust(column - depth * 4 - 4), 1)
         tags = [f"#{l}" for l in labels.get(bead_id, [])
                 if l not in shared and matches(l, cfg["row_labels"])]
         if tags:
