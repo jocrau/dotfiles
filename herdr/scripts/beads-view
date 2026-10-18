@@ -34,6 +34,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 
@@ -54,6 +55,9 @@ BEAD = re.compile(r"^(?P<prefix>(?:│   |    )*(?:├── |└── )?)(?P<s
 DIM, BOLD, ACCENT, RESET = "\x1b[2m", "\x1b[1m", "\x1b[36m", "\x1b[0m"
 COLOR_ENV = dict(os.environ, CLICOLOR_FORCE="1")
 STATUS_SYMBOL = {"open": "○", "in_progress": "◐", "blocked": "●", "closed": "✓", "deferred": "❄"}
+# The terminal's own palette, so the theme decides the actual colours.
+STATUS_COLOR = {"in_progress": "\x1b[33m", "blocked": "\x1b[31m", "closed": "\x1b[32m", "deferred": "\x1b[34m"}
+PRIORITY_COLOR = {0: "\x1b[1;31m", 1: "\x1b[33m", 3: DIM, 4: DIM}
 
 
 def repo_root():
@@ -213,8 +217,31 @@ def stamp(issue):
     return re.sub(r"\W", "", issue.get("updated_at") or "") or "0"
 
 
-def detail_path(bead_id, bead_stamp):
-    return os.path.join(DETAIL_DIR, f"{bead_id.replace('/', '_')}@{bead_stamp}")
+def detail_path(bead_id, bead_stamp="", width=""):
+    """The cached pane for a bead version at a pane width; without a stamp,
+    the prefix shared by all of the bead's cached panes."""
+    name = f"{bead_id.replace('/', '_')}@" + (f"{bead_stamp}@{width}" if bead_stamp else "")
+    return os.path.join(DETAIL_DIR, name)
+
+
+def preview_width():
+    """fzf's preview width; outside fzf (the watcher) the last one seen."""
+    path = os.path.join(CACHE_DIR, "width")
+    width = os.environ.get("FZF_PREVIEW_COLUMNS", "")
+    if width.isdigit():
+        try:
+            with open(path, encoding="utf-8") as f:
+                seen = f.read()
+        except OSError:
+            seen = ""
+        if seen != width:
+            write(path, width)
+        return int(width)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(f.read())
+    except (OSError, ValueError):
+        return 80
 
 
 def render(state, fresh=False):
@@ -318,32 +345,70 @@ def reflow(text):
     return "\n".join(out).strip()
 
 
-def detail(bead_id):
-    """The preview pane: a compact header, then the text as paragraphs."""
+KEY_WIDTH = 12  # the header's label column
+
+
+def fit(text, room):
+    """One line of at most `room` characters."""
+    return text if len(text) <= room else text[:max(room - 1, 1)].rstrip() + "…"
+
+
+def detail(bead_id, width=80):
+    """The preview pane: title, a header of labelled facts, then the text."""
     try:
         issue = json.loads(bd("show", bead_id, "--json") or "[]")
         issue = issue[0] if isinstance(issue, list) else issue
     except (ValueError, IndexError):
         return bd("show", bead_id)
-    status = issue.get("status", "")
+    prefix, room = issue_prefix(), max(width - KEY_WIDTH, 20)
     deps = issue.get("dependencies") or []
-    # Title first; then one dim line of facts with the full ID (this pane shows
-    # one bead out of the tree's context), the parent with its title, labels.
-    lines = [
-        f"{BOLD}{issue.get('title', '')}{RESET}",
-        f"{DIM}{bead_id} · {RESET}{STATUS_SYMBOL.get(status, '')} {status.replace('_', ' ')}"
-        f"{DIM} · P{issue.get('priority', '')} · {issue.get('issue_type', '')}{RESET}",
-    ]
+    # The full ID under the title: this pane shows one bead out of the tree.
+    lines = [f"{BOLD}{issue.get('title', '')}{RESET}", f"{DIM}{bead_id}{RESET}", ""]
+
+    def row(key, value):  # the label only on a group's first line
+        lines.append(f"{DIM}{key.ljust(KEY_WIDTH - 1)}{RESET} {value}")
+
+    def ref(dep):  # another bead: status, short ID, title; a done one dimmed
+        status, short = dep.get("status", ""), short_id(dep["id"], "", prefix)
+        title = fit(dep.get("title", ""), room - len(short) - 4)
+        if status == "closed":
+            return f"{DIM}✓ {short}  {title}{RESET}"
+        return f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')}{RESET} {BOLD}{short}{RESET}  {title}"
+
+    status, priority = issue.get("status", ""), issue.get("priority")
+    facts = [f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')} {status.replace('_', ' ')}{RESET}",
+             f"{PRIORITY_COLOR.get(priority, '')}P{priority}{RESET}",
+             f"{DIM}{issue.get('issue_type', '')}{RESET}"]
+    if issue.get("assignee"):
+        facts.append(f"@{issue['assignee']}")
+    row("status", "   ".join(facts))
     parent = next((d for d in deps if d.get("dependency_type") == "parent-child"), None)
-    if issue.get("parent"):
-        title = parent.get("title", "") if parent and parent.get("id") == issue["parent"] else ""
-        lines.append(f"{DIM}↑ {issue['parent']}  {title}{RESET}")
-    for dep in deps:
-        if dep.get("dependency_type") not in ("parent-child", None):
-            lines.append(f"{DIM}{dep['dependency_type'].replace('-', ' ')}: {dep['id']}  "
-                         f"{STATUS_SYMBOL.get(dep.get('status', ''), '')} {dep.get('title', '')}{RESET}")
-    if issue.get("labels"):
-        lines.append(DIM + "  ".join(f"#{l}" for l in sorted(issue["labels"])) + RESET)
+    if parent:
+        row("parent", ref(parent))
+    # Open blockers first: they are what keeps this bead from starting.
+    groups = {}
+    for dep in sorted(deps, key=lambda d: d.get("status") == "closed"):
+        kind = dep.get("dependency_type") or ""
+        if kind != "parent-child":
+            groups.setdefault("blocked by" if kind == "blocks" else kind.replace("-", " "), []).append(dep)
+    for key, group in groups.items():
+        for i, dep in enumerate(group):
+            row(key if i == 0 else "", ref(dep))
+    # Labels by namespace, one line each (`owner  jochen`), plain ones first.
+    labels = sorted(issue.get("labels") or [])
+    by_ns = {}
+    for label in labels:
+        ns, sep, value = label.partition(":")
+        by_ns.setdefault(ns if sep else "", []).append(value if sep else label)
+    ns_width = max((len(ns) for ns in by_ns), default=0)
+    key = "labels"
+    for ns in sorted(by_ns):
+        lead = f"{DIM}{ns.ljust(ns_width)}{RESET}  " if ns else ""
+        indent = ns_width + 2 if ns else 0
+        wrapped = textwrap.wrap("  ".join(by_ns[ns]), max(room - indent, 10), break_on_hyphens=False) or [""]
+        for i, part in enumerate(wrapped):
+            row(key, (lead if i == 0 else " " * indent) + part)
+            key = ""
     for key, heading in (("description", ""), ("design", "Design"),
                          ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
         text = reflow(issue.get(key, ""))
@@ -357,14 +422,15 @@ def detail(bead_id):
 
 def cached_detail(bead_id, bead_stamp=""):
     """The detail pane, cached under the bead's stamp when one is given."""
-    text = detail(bead_id)
+    width = preview_width()
+    text = detail(bead_id, width)
     if bead_stamp:
-        write(detail_path(bead_id, bead_stamp), text)
+        write(detail_path(bead_id, bead_stamp, width), text)
     return text
 
 
 def forget_detail(bead_id):
-    for path in glob.glob(glob.escape(detail_path(bead_id, "")) + "*"):
+    for path in glob.glob(glob.escape(detail_path(bead_id)) + "*"):
         try:
             os.remove(path)
         except OSError:
@@ -437,9 +503,10 @@ def prefetch(state, budget):
     drop the ones that are out of date."""
     deadline = time.monotonic() + budget
     for issue in fetch(state)[1]:
-        path = detail_path(issue["id"], stamp(issue))
-        for old in glob.glob(glob.escape(detail_path(issue["id"], "")) + "*"):
-            if old != path:
+        path = detail_path(issue["id"], stamp(issue), preview_width())
+        current = detail_path(issue["id"], stamp(issue))  # this version, any width
+        for old in glob.glob(glob.escape(detail_path(issue["id"])) + "*"):
+            if not old.startswith(current):
                 try:
                     os.remove(old)
                 except OSError:
@@ -490,7 +557,7 @@ def view():
         "--footer-border=none", "--ellipsis=…",
         "--footer=enter focus · ⌫ up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
         # The cached pane when there is one (instant), else bd (and cache it).
-        f"--preview=cat {shlex.quote(DETAIL_DIR)}/{{1}}@{{2}} 2>/dev/null || {RUN} show {{1}} {{2}}",
+        f"--preview=cat {shlex.quote(DETAIL_DIR)}/{{1}}@{{2}}@$FZF_PREVIEW_COLUMNS 2>/dev/null || {RUN} show {{1}} {{2}}",
         "--preview-window=right,50%,wrap-word,border-left,noinfo",
         "--preview-wrap-sign=",
         f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
