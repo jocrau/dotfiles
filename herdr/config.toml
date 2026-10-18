@@ -39,20 +39,14 @@ description = "Toggle file explorer / source control sidebar"
 [[keys.command]]
 key = "cmd+b"
 type = "shell"
-command = "/Users/jocrau/.config/herdr/scripts/beads-board.sh"
-description = "Toggle beads board overlay (herdr-beads, full width)"
+command = "/Users/jocrau/.config/herdr/scripts/beads-tree.sh"
+description = "Toggle full-tab beads browser (b9s, open beads)"
 
 [[keys.command]]
 key = "cmd+g"
 type = "shell"
 command = "/Users/jocrau/.config/herdr/scripts/live-git.sh"
 description = "Toggle live git view (Source Control that keeps refreshing)"
-
-[[keys.command]]
-key = "cmd+shift+b"
-type = "shell"
-command = "/Users/jocrau/.config/herdr/scripts/beads-tree.sh"
-description = "Toggle full-tab beads browser (b9s)"
 
 # Spaces sidebar: name, then branch only when it isn't main/master, then the
 # Claude session summary reported by ~/.config/herdr/scripts/claude-summary.py.
