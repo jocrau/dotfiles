@@ -1,37 +1,56 @@
-#!/usr/bin/python3 -I
+#!/usr/bin/env python3
 """beads-view: `bd list --watch`, made interactive with fzf.
 
-Shows bd's own tree for the current repo (open beads by default) with a
-`bd show` detail pane. Keys: Enter focuses the selected bead (its subtree
+Shows the current repo's beads as bd's own tree (open beads by default) with a
+detail pane for the selected bead. Keys: Enter focuses a bead (its subtree
 becomes the view), Backspace on an empty query goes back up, Tab folds or
-unfolds a bead's children, Ctrl-L edits the selected bead's labels (to
-steer agent-fleet), Ctrl-A switches between open and all beads, typing
-filters, Esc quits. Labels show after each bead's ID. The view refreshes by itself when beads change.
+unfolds a bead's children, Ctrl-L edits the bead's labels, Ctrl-A switches
+between open and all beads, typing filters, Esc quits. The view refreshes by
+itself when beads change.
+
+IDs are shown relative to their parent (`proj-erd.12.18` under `proj-erd.12`
+shows as `.18`; at the top the repo's issue prefix is dropped). Rows end with
+the bead's labels, leaving out labels that every row in the view shares.
+
+Optional settings in ~/.config/beads-view/config.json (all keys optional):
+  "row_labels":       glob patterns of labels shown in rows      (default ["*"])
+  "readonly_labels":  glob patterns Ctrl-L never offers or changes (default [])
+  "suggested_labels": extra labels Ctrl-L offers                  (default [])
 
 Focus, folds and the open/all choice are remembered per repo in
 ~/.local/state/beads-view/. Subcommands (render, header, toggle, focus, up,
-all, show, labels, watch) are called by fzf's key bindings; run without arguments to
-start the view. Standard library only; needs bd and fzf on the paths below.
+all, show, labels, watch) are called by fzf's key bindings; run without
+arguments to start the view. Needs python3, bd and fzf (0.60 or later).
 """
+import fnmatch
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import textwrap
 import time
 import urllib.request
 
-BD = "/opt/homebrew/bin/bd"
-FZF = "/opt/homebrew/bin/fzf"
+# Key bindings may run with a minimal PATH (e.g. from a terminal multiplexer),
+# so also look in the usual install locations, and pass that PATH on.
+_EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin"),
+               os.path.expanduser("~/go/bin")]
+os.environ["PATH"] = os.pathsep.join(
+    dict.fromkeys(os.environ.get("PATH", "").split(os.pathsep) + _EXTRA_PATH))
+BD, FZF = shutil.which("bd"), shutil.which("fzf")
 SELF = os.path.realpath(__file__)
+PY = sys.executable
 REFRESH_SECONDS = 2
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # A bead line in `bd list`: tree prefix, status symbol, ID.
 BEAD = re.compile(r"^(?P<prefix>(?:│   |    )*(?:├── |└── )?)(?P<sym>[○◐●✓❄]) (?P<id>\S+)")
-DIM, RESET = "\x1b[2m", "\x1b[0m"
+DIM, BOLD, RESET = "\x1b[2m", "\x1b[1m", "\x1b[0m"
 COLOR_ENV = dict(os.environ, CLICOLOR_FORCE="1")
+STATUS_SYMBOL = {"open": "○", "in_progress": "◐", "blocked": "●", "closed": "✓", "deferred": "❄"}
 
 
 def repo_root():
@@ -47,9 +66,27 @@ def repo_root():
 
 ROOT = repo_root()
 STATE_FILE = os.path.join(
-    os.path.expanduser("~/.local/state/beads-view"),
-    hashlib.sha1(ROOT.encode()).hexdigest()[:12] + ".json",
-)
+    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "beads-view",
+    hashlib.sha1(ROOT.encode()).hexdigest()[:12] + ".json")
+CONFIG_FILE = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "beads-view", "config.json")
+
+
+def config():
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    return {
+        "row_labels": cfg.get("row_labels", ["*"]),
+        "readonly_labels": cfg.get("readonly_labels", []),
+        "suggested_labels": cfg.get("suggested_labels", []),
+    }
+
+
+def matches(label, patterns):
+    return any(fnmatch.fnmatchcase(label, p) for p in patterns)
 
 
 def load():
@@ -76,6 +113,19 @@ def bd(*args):
     out = subprocess.run([BD, *args], cwd=ROOT, env=COLOR_ENV,
                          capture_output=True, text=True, timeout=20)
     return out.stdout
+
+
+def issue_prefix():
+    return bd("config", "get", "issue_prefix").strip()
+
+
+def short_id(bead_id, parent, prefix):
+    """`proj-erd.12.18` -> `.18` under `proj-erd.12`, else `erd.12.18`."""
+    if parent and bead_id.startswith(parent + "."):
+        return bead_id[len(parent):]
+    if prefix and bead_id.startswith(prefix + "-"):
+        return bead_id[len(prefix) + 1:]
+    return bead_id
 
 
 def list_args(state):
@@ -106,51 +156,111 @@ def labels_by_id(state):
     return {i["id"]: sorted(i.get("labels") or []) for i in issues if "id" in i}
 
 
-def label_tags(labels):
-    """Dimmed `#label` tags; fleet-owned `fleet:<step>` labels dimmer still."""
-    tags = [f"{DIM}{'#' + l}{RESET}" for l in labels if not l.startswith("fleet:")]
-    tags += [f"{DIM}\x1b[3m#{l}{RESET}" for l in labels if l.startswith("fleet:")]
-    return " ".join(tags)
-
-
 def render(state):
-    """fzf input: `ID<TAB>line`, with fold markers and folded subtrees removed."""
-    rows = beads(state)
-    labels = labels_by_id(state)
+    """fzf input: `ID<TAB>line`, with short IDs, fold markers and row labels."""
+    rows, labels, cfg, prefix = beads(state), labels_by_id(state), config(), issue_prefix()
     collapsed = set(state["collapsed"])
-    out, hide_below = [], None
+    shared = set.intersection(*(set(labels.get(r[1], [])) for r in rows)) if len(rows) > 1 else set()
+    out, hide_below, parents = [], None, []
     for i, (depth, bead_id, line) in enumerate(rows):
+        parents[depth:] = [bead_id]
         if hide_below is not None:
             if depth > hide_below:
                 continue
             hide_below = None
         has_children = i + 1 < len(rows) and rows[i + 1][0] > depth
         sym = BEAD.match(ANSI.sub("", line)).group("sym")
+        suffix = ""
         if has_children and bead_id in collapsed:
             hidden = 0
             for later_depth, _, _ in rows[i + 1:]:
                 if later_depth <= depth:
                     break
                 hidden += 1
-            marker, suffix, hide_below = "▸ ", f"  {DIM}(+{hidden}){RESET}", depth
+            marker, suffix, hide_below = "▸ ", f"  {DIM}+{hidden}{RESET}", depth
         elif has_children:
-            marker, suffix = "▾ ", ""
+            marker = "▾ "
         else:
-            marker, suffix = "  ", ""
-        line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1) + suffix
-        if labels.get(bead_id):  # right after the ID, so long titles can't hide them
-            line = line.replace(bead_id, f"{bead_id} {label_tags(labels[bead_id])}", 1)
-        out.append(f"{bead_id}\t{line}")
+            marker = "  "
+        parent = parents[depth - 1] if depth else ""
+        line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1)
+        line = line.replace(bead_id, short_id(bead_id, parent, prefix), 1)
+        tags = [f"#{l}" for l in labels.get(bead_id, [])
+                if l not in shared and matches(l, cfg["row_labels"])]
+        if tags:
+            suffix += f"  {DIM}{' '.join(tags)}{RESET}"
+        out.append(f"{bead_id}\t{line}{suffix}")
     return "\n".join(out)
 
 
-# Labels a person sets to steer agent-fleet (see the plugin README's Labels);
-# `fleet:<step>` labels belong to the fleet and are never offered or touched.
-STEERING_LABELS = ["fleet", "owner:jochen", "contract", "kind:planning", "kind:docs", "risk:high"]
+def header(state):
+    prefix = issue_prefix()
+    trail, parent = [], ""
+    for bead_id in state["stack"]:
+        trail.append(short_id(bead_id, parent, prefix))
+        parent = bead_id
+    where = " › ".join([os.path.basename(ROOT)] + trail)
+    return f"{BOLD}{where}{RESET}  {DIM}{'all' if state['all'] else 'open'}{RESET}"
+
+
+def reflow(text):
+    """Join hard-wrapped lines into paragraphs; keep lists, tables, code."""
+    out, in_code = [], False
+    block = re.compile(r"\s*([-*+]\s|\d+[.)]\s|\||#|>|```)")
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        if line.strip().startswith("```"):
+            in_code = not in_code
+            out.append(line)
+            continue
+        if in_code or not line.strip():
+            if not (not line.strip() and out and not out[-1].strip()):
+                out.append(line)
+            continue
+        prev = out[-1] if out else ""
+        if prev.strip() and not block.match(line) and not prev.strip().startswith(("|", "#", "```")):
+            out[-1] = prev + " " + line.strip()
+        else:
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def detail(bead_id):
+    """The preview pane: a compact header, then the text as paragraphs."""
+    try:
+        issue = json.loads(bd("show", bead_id, "--json") or "[]")
+        issue = issue[0] if isinstance(issue, list) else issue
+    except (ValueError, IndexError):
+        return bd("show", bead_id)
+    prefix = issue_prefix()
+    status = issue.get("status", "")
+    lines = [
+        f"{BOLD}{short_id(bead_id, '', prefix)}{RESET}  {STATUS_SYMBOL.get(status, '')} {status}"
+        f"  {DIM}P{issue.get('priority', '')} · {issue.get('issue_type', '')}{RESET}",
+        f"{BOLD}{issue.get('title', '')}{RESET}",
+    ]
+    if issue.get("labels"):
+        lines.append(DIM + " ".join(f"#{l}" for l in sorted(issue["labels"])) + RESET)
+    if issue.get("parent"):
+        lines.append(f"{DIM}↑ {short_id(issue['parent'], '', prefix)}{RESET}")
+    for dep in issue.get("dependencies") or []:
+        if dep.get("dependency_type") not in ("parent-child", None):
+            lines.append(f"{DIM}{dep['dependency_type']}: {short_id(dep['id'], '', prefix)}"
+                         f" {STATUS_SYMBOL.get(dep.get('status', ''), '')} {dep.get('title', '')}{RESET}")
+    for key, title in (("description", ""), ("design", "Design"),
+                       ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
+        text = reflow(issue.get(key, ""))
+        if text:
+            lines.append("")
+            if title:
+                lines.append(f"{DIM}{title}{RESET}")
+            lines.append(text)
+    return "\n".join(lines) + "\n"
 
 
 def edit_labels(bead_id):
     """Multi-select the bead's labels in fzf; apply the difference with bd."""
+    cfg = config()
     try:
         issue = json.loads(bd("show", bead_id, "--json") or "[]")
         issue = issue[0] if isinstance(issue, list) else issue
@@ -158,25 +268,26 @@ def edit_labels(bead_id):
         used = [entry["label"] for entry in json.loads(bd("label", "list-all", "--json") or "[]")]
     except (ValueError, KeyError, IndexError):
         return
-    editable = [l for l in current if not l.startswith("fleet:")]
-    others = [l for l in dict.fromkeys(STEERING_LABELS + sorted(used))
-              if l not in editable and not l.startswith("fleet:")]
+    readonly = cfg["readonly_labels"]
+    editable = [l for l in current if not matches(l, readonly)]
+    others = [l for l in dict.fromkeys(cfg["suggested_labels"] + sorted(used))
+              if l not in editable and not matches(l, readonly)]
     choices = editable + others
     preselect = "+".join(f"pos({i})+select" for i in range(1, len(editable) + 1))
     args = [
         FZF, "--multi", "--layout=reverse", "--no-sort", "--print-query",
-        "--border=rounded", f"--border-label= labels · {bead_id} ",
-        "--prompt=new label › ", "--marker=✓ ", "--info=inline-right",
-        "--header=tab toggles · type a new label · enter applies · esc cancels",
+        "--no-separator", "--no-scrollbar", "--gutter= ", "--marker=✓ ", "--info=hidden",
+        "--footer-border=none",
+        f"--prompt={short_id(bead_id, '', issue_prefix())} labels › ",
+        "--footer=tab toggles · type a new label · enter applies · esc cancels",
         # load, not start: the rows must be in before they can be ticked.
         f"--bind=load:{preselect}+first" if preselect else "--bind=load:first",
         # With nothing ticked fzf returns the row under the cursor; mark that
-        # case so unticking everything removes every label.
-        # (transform: form, because the command itself contains parentheses.)
+        # case so unticking everything removes every label. (transform: form,
+        # because the command itself contains parentheses.)
         '--bind=enter:transform:[ "$FZF_SELECT_COUNT" -eq 0 ] && echo "print(<none>)+accept" || echo accept',
     ]
-    proc = subprocess.run(args, input="\n".join(choices), text=True, capture_output=False,
-                          stdout=subprocess.PIPE)
+    proc = subprocess.run(args, input="\n".join(choices), text=True, stdout=subprocess.PIPE)
     if proc.returncode not in (0, 1):  # Esc or an error: change nothing
         return
     lines = proc.stdout.split("\n")
@@ -184,7 +295,7 @@ def edit_labels(bead_id):
     wanted = set() if "<none>" in picked else set(picked)
     # The typed text adds a label when it names one exactly or is new; text
     # that only narrows the list (part of an existing label) adds nothing.
-    if query and not query.startswith("fleet:"):
+    if query and not matches(query, readonly):
         if query in choices or not any(query.lower() in c.lower() for c in choices):
             wanted.add(query)
     add, remove = sorted(wanted - set(editable)), sorted(set(editable) - wanted)
@@ -196,12 +307,6 @@ def edit_labels(bead_id):
     for label in remove:
         cmd += ["--remove-label", label]
     subprocess.run([BD, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
-
-
-def header(state):
-    where = " › ".join([os.path.basename(ROOT)] + state["stack"])
-    scope = "all beads" if state["all"] else "open beads"
-    return f"{where}   {DIM}{scope}{RESET}"
 
 
 def watch():
@@ -221,7 +326,7 @@ def watch():
         digest = hashlib.sha1(view.encode()).hexdigest()
         if digest == last:
             continue
-        action = f"reload({SELF} render)+refresh-preview"
+        action = f"reload({RUN} render)+refresh-preview"
         try:
             urllib.request.urlopen(urllib.request.Request(url, data=action.encode(), method="POST"), timeout=3)
         except Exception:
@@ -229,25 +334,27 @@ def watch():
         last = digest
 
 
+RUN = f"{PY} {SELF}"  # how fzf's bindings call this script
+
+
 def view():
     # The header changes before the (asynchronous) reload; after it, fzf drops it.
-    reload = f"transform-header({SELF} header)+reload({SELF} render)"
-    footer = "enter focus · ⌫ up · tab fold · ctrl-l labels · ctrl-a open/all · type to filter · esc quit"
-    legend = "○ open  ◐ in progress  ● blocked  ✓ closed  ❄ deferred"
+    reload = f"transform-header({RUN} header)+reload({RUN} render)"
     args = [
         FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
-        "--delimiter=\t", "--with-nth=2..", "--id-nth=1",
-        "--listen", "--border=rounded", "--border-label= beads ",
-        "--info=inline-right", "--prompt=filter › ",
-        f"--footer={footer}\n{legend}",
-        f"--preview={SELF} show {{1}}", "--preview-window=right,45%,wrap,border-left",
-        f"--bind=start:execute-silent({SELF} watch >/dev/null 2>&1 &)+transform-header({SELF} header)",
-        f"--bind=tab:execute-silent({SELF} toggle {{1}})+reload({SELF} render)",
-        f"--bind=enter:execute-silent({SELF} focus {{1}})+{reload}+first",
-        f"--bind=double-click:execute-silent({SELF} focus {{1}})+{reload}+first",
-        f"--bind=backward-eof:execute-silent({SELF} up)+{reload}",
-        f"--bind=ctrl-a:execute-silent({SELF} all)+{reload}",
-        f"--bind=ctrl-l:execute({SELF} labels {{1}})+reload({SELF} render)+refresh-preview",
+        "--delimiter=\t", "--with-nth=2..", "--id-nth=1", "--listen",
+        "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
+        "--footer-border=none", "--ellipsis=…",
+        "--footer=enter focus · ⌫ up · tab fold · ctrl-l labels · ctrl-a open/all · esc quit",
+        f"--preview={RUN} show {{1}}", "--preview-window=right,50%,wrap-word,border-left,noinfo",
+        "--preview-wrap-sign= ",
+        f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
+        f"--bind=tab:execute-silent({RUN} toggle {{1}})+reload({RUN} render)",
+        f"--bind=enter:execute-silent({RUN} focus {{1}})+{reload}+first",
+        f"--bind=double-click:execute-silent({RUN} focus {{1}})+{reload}+first",
+        f"--bind=backward-eof:execute-silent({RUN} up)+{reload}",
+        f"--bind=ctrl-a:execute-silent({RUN} all)+{reload}",
+        f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render)+refresh-preview",
         "--bind=esc:abort",
     ]
     proc = subprocess.run(args, input=render(load()), text=True, cwd=ROOT)
@@ -255,6 +362,9 @@ def view():
 
 
 def main(argv):
+    missing = [name for name, path in (("bd", BD), ("fzf", FZF)) if not path]
+    if missing:
+        sys.exit(f"beads-view: needs {' and '.join(missing)} on PATH")
     if not argv:
         return view()
     cmd, rest = argv[0], argv[1:]
@@ -264,10 +374,9 @@ def main(argv):
     elif cmd == "header":
         print(header(state))
     elif cmd == "show" and rest:
-        sys.stdout.write(bd("show", rest[0]))
+        sys.stdout.write(detail(rest[0]))
     elif cmd == "toggle" and rest:
-        folded = set(state["collapsed"]) ^ {rest[0]}
-        state["collapsed"] = sorted(folded)
+        state["collapsed"] = sorted(set(state["collapsed"]) ^ {rest[0]})
         save(state)
     elif cmd == "focus" and rest:
         if not state["stack"] or state["stack"][-1] != rest[0]:

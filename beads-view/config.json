@@ -1,0 +1,5 @@
+{
+  "row_labels": ["fleet", "fleet:*", "owner:*", "kind:*", "risk:*", "contract"],
+  "readonly_labels": ["fleet:*"],
+  "suggested_labels": ["fleet", "owner:jochen", "owner:sam", "contract", "kind:planning", "kind:docs", "risk:high"]
+}
