@@ -1,10 +1,10 @@
 #!/bin/sh
-# Toggle a full-tab live beads tree (`bd list --watch`) for the focused pane's
-# repo: splits the focused pane and zooms the new pane. Only panes opened by
-# this script are tracked/closed.
+# Toggle a full-tab beads browser (b9s: live tree, epic focus with x, detail,
+# search) for the focused pane's repo: splits the focused pane and zooms the
+# new pane. Only panes opened by this script are tracked/closed.
 HERDR=/opt/homebrew/bin/herdr
 JQ=/opt/homebrew/bin/jq
-BD=/opt/homebrew/bin/bd
+B9S=/opt/homebrew/bin/b9s
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/beads-tree-panes"
 mkdir -p "$(dirname "$STATE")" && touch "$STATE"
 
@@ -25,8 +25,8 @@ if [ -n "$existing" ]; then
   exit 0
 fi
 
-# Root at the nearest .beads ancestor below $HOME. Without one, bd would fail
-# and the pane would vanish at once, so say so instead of opening anything.
+# Root at the nearest .beads ancestor below $HOME. Without one there is
+# nothing to browse, so say so instead of opening anything.
 dir=$cwd
 while [ "$dir" != "/" ] && [ "$dir" != "$HOME" ] && [ ! -d "$dir/.beads" ]; do dir=$(dirname "$dir"); done
 if [ "$dir" = "$HOME" ] || [ ! -d "$dir/.beads" ]; then
@@ -46,6 +46,6 @@ while [ $i -lt 30 ]; do
   "$HERDR" pane read "$new" --source visible 2>/dev/null | grep -q '[^[:space:]]' && break
   sleep 0.1; i=$((i + 1))
 done
-# No exec: if bd exits with an error, the pane stays open showing it.
-"$HERDR" pane run "$new" "$BD list --limit 0 --watch" >/dev/null
+# No exec: if b9s exits with an error, the pane stays open showing it.
+"$HERDR" pane run "$new" "$B9S" >/dev/null
 "$HERDR" pane zoom "$new" --on >/dev/null

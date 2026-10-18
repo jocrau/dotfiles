@@ -52,7 +52,7 @@ description = "Toggle live git view (Source Control that keeps refreshing)"
 key = "cmd+shift+b"
 type = "shell"
 command = "/Users/jocrau/.config/herdr/scripts/beads-tree.sh"
-description = "Toggle full-tab live beads tree (bd list --watch)"
+description = "Toggle full-tab beads browser (b9s)"
 
 # Spaces sidebar: name, then branch only when it isn't main/master, then the
 # Claude session summary reported by ~/.config/herdr/scripts/claude-summary.py.

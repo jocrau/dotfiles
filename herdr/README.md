@@ -9,6 +9,6 @@ Ghostty starts herdr (`initial-command`) and hands it the Cmd keys below by unbi
 | `cmd+o` | file sidebar (herdr-sidebar) |
 | `cmd+g` | live git view: sidebar Source Control that keeps refreshing (`scripts/live-git.sh`) |
 | `cmd+b` | beads board on the Table view (herdr-beads, `scripts/beads-board.sh`) |
-| `cmd+shift+b` | live `bd list` tree for the current repo (`scripts/beads-tree.sh`) |
+| `cmd+shift+b` | beads browser (b9s: tree, `x` focuses an epic, `Enter` detail, `/` search) for the current repo (`scripts/beads-tree.sh`) |
 
 The Spaces sidebar shows each workspace's Claude session summary on a third line. `scripts/claude-summary.py` writes it from Claude Code hooks (`../claude/herdr-summary-hooks.json`), finding the session's pane by its live process, so renaming workspaces and moving panes is safe.
