@@ -451,16 +451,20 @@ def forget_detail(bead_id):
             pass
 
 
-def edit_labels(bead_id):
-    """Multi-select the bead's labels in fzf; apply the difference with bd."""
+def edit_labels(bead_id, state):
+    """Multi-select the bead's labels in fzf; apply the difference with bd.
+
+    Offers the labels in use on the view's beads (open ones in the open view),
+    not `bd label list-all`, which also counts closed beads and so keeps
+    offering labels long retired; any other label can still be typed."""
     cfg = config()
     try:
         issue = json.loads(bd("show", bead_id, "--json") or "[]")
         issue = issue[0] if isinstance(issue, list) else issue
         current = sorted(issue.get("labels") or [])
-        used = [entry["label"] for entry in json.loads(bd("label", "list-all", "--json") or "[]")]
     except (ValueError, KeyError, IndexError):
         return
+    used = sorted({l for i in fetch(state)[1] for l in i.get("labels") or []})
     readonly = cfg["readonly_labels"]
 
     def grouped(labels):  # plain labels first, then by namespace (`owner:…`)
@@ -643,7 +647,7 @@ def main(argv):
         state["all"] = not state["all"]
         save(state)
     elif cmd == "labels" and rest:
-        edit_labels(rest[0])
+        edit_labels(rest[0], state)
     elif cmd == "watch":
         watch()
     else:
