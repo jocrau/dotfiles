@@ -258,9 +258,16 @@ def render(state, fresh=False):
     cfg, prefix = config(), issue_prefix()
     collapsed = set(state["collapsed"])
     shared = set.intersection(*(set(labels.get(r[1], [])) for r in rows)) if len(rows) > 1 else set()
-    out, hide_below, parents = [], None, []
-    for i, (depth, bead_id, line) in enumerate(rows):
+    # Short IDs, padded to the longest among their siblings: siblings share the
+    # tree indent, so their priorities and titles line up.
+    shorts, width, parents = [], {}, []
+    for depth, bead_id, _ in rows:
         parents[depth:] = [bead_id]
+        parent = parents[depth - 1] if depth else ""
+        shorts.append((parent, short_id(bead_id, parent, prefix)))
+        width[parent] = max(width.get(parent, 0), len(shorts[-1][1]))
+    out, hide_below = [], None
+    for i, (depth, bead_id, line) in enumerate(rows):
         if hide_below is not None:
             if depth > hide_below:
                 continue
@@ -279,9 +286,9 @@ def render(state, fresh=False):
             marker = "▾ "
         else:
             marker = "  "
-        parent = parents[depth - 1] if depth else ""
+        parent, short = shorts[i]
         line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1)
-        line = line.replace(bead_id, short_id(bead_id, parent, prefix), 1)
+        line = line.replace(bead_id, short.ljust(width[parent]), 1)
         tags = [f"#{l}" for l in labels.get(bead_id, [])
                 if l not in shared and matches(l, cfg["row_labels"])]
         if tags:
