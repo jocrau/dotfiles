@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """beads-view: `bd list --watch`, made interactive with fzf.
 
-Shows the current repo's beads as bd's own tree (open beads by default) with a
-detail pane for the selected bead. Keys: Enter focuses a bead (its subtree
-becomes the view), Backspace on an empty query goes back up, Tab folds or
-unfolds a bead's children, 1-9 (with an empty filter) folds the tree to that
-many levels and 0 unfolds it all, Ctrl-L edits the bead's labels, Ctrl-A
-switches between open and all beads, typing filters, Esc quits. The view
-refreshes by itself when beads change.
+Shows the current repo's beads as bd's own tree (open beads by default); Enter
+shows or hides a detail pane for the selected bead. Keys (arrows and digits
+while the filter is empty): Right focuses a bead (its subtree becomes the
+view), Left or Backspace goes back up, Tab folds or unfolds a bead's
+children, 1-9 folds the tree to that many levels and 0 unfolds it all, Ctrl-L
+edits the bead's labels, Ctrl-A switches between open and all beads, typing
+filters, Esc quits. The view refreshes by itself when beads change.
 
 IDs are shown relative to their parent (`proj-erd.12.18` under `proj-erd.12`
 shows as `.18`; at the top the repo's issue prefix is dropped). Rows end with
@@ -555,22 +555,27 @@ def view():
         "--delimiter=\t", "--with-nth=3..", "--id-nth=1", "--listen",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
         "--footer-border=none", "--ellipsis=…",
-        "--footer=enter focus · ⌫ up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
+        "--footer=enter details · → focus · ← up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
         # The cached pane when there is one (instant), else bd (and cache it).
         f"--preview=cat {shlex.quote(DETAIL_DIR)}/{{1}}@{{2}}@$FZF_PREVIEW_COLUMNS 2>/dev/null || {RUN} show {{1}} {{2}}",
-        "--preview-window=right,50%,wrap-word,border-left,noinfo",
+        "--preview-window=right,50%,wrap-word,border-left,noinfo,hidden",
         "--preview-wrap-sign=",
         f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
         f"--bind=tab:execute-silent({RUN} toggle {{1}})+reload({RUN} render)",
-        f"--bind=enter:execute-silent({RUN} focus {{1}})+{reload}+first",
+        "--bind=enter:toggle-preview",
         f"--bind=double-click:execute-silent({RUN} focus {{1}})+{reload}+first",
         f"--bind=backward-eof:execute-silent({RUN} up)+{reload}",
         f"--bind=ctrl-a:execute-silent({RUN} all)+{reload}",
         f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render --fresh)+refresh-preview",
         "--bind=esc:abort",
     ]
-    # Digits fold to a level while the filter is empty, and are typed otherwise
+    # Arrows go into and out of a subtree while the filter is empty, and move
+    # the cursor in the filter otherwise; digits fold to a level, or are typed
     # (so `12` still finds `.12`). transform: form, as the action has parentheses.
+    args.append(f'--bind=right:transform:[ -z {{q}} ] && echo "execute-silent({RUN} focus {{1}})'
+                f'+{reload}+first" || echo forward-char')
+    args.append(f'--bind=left:transform:[ -z {{q}} ] && echo "execute-silent({RUN} up)'
+                f'+{reload}" || echo backward-char')
     for n in range(10):
         args.append(f'--bind={n}:transform:[ -z {{q}} ] && echo "execute-silent({RUN} level {n})'
                     f'+reload({RUN} render)" || echo "put({n})"')
