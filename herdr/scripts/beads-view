@@ -11,9 +11,9 @@ children, 1-9 folds the tree to that many levels and 0 unfolds it all, Ctrl-L
 edits the bead's labels, Ctrl-A switches between open and all beads, typing
 filters, Esc quits. The view refreshes by itself when beads change.
 
-Right on a bead whose details show (or Ctrl-E anywhere) edits it in place: the
-same layout, full screen, with the title, status, priority, labels and text
-editable. Tab, Up and Down move between fields (a click too); Left/Right or
+Right on a bead whose details show (or Ctrl-E anywhere) edits it in place: in
+the detail pane itself, the tree staying beside it, with the title, status,
+priority, labels and text editable. Tab, Up and Down move between fields (a click too); Left/Right or
 a digit/letter changes status and priority; Ctrl-E hands a text to $EDITOR,
 Ctrl-L picks labels; Ctrl-S saves with one `bd update`, Esc cancels.
 
@@ -598,10 +598,13 @@ def pick_labels(bead_id, current, state):
 
 
 # The editor: the detail pane's layout, with the title, status, priority,
-# labels and text sections editable in place. curses, imported by edit() only.
-curses = None
+# labels and text sections editable in place, drawn into the pane's own
+# rectangle. fzf runs inline (--height), so the tree stays on screen beside
+# it while the editor runs; plain ANSI and raw keys, as curses would clear
+# the screen.
 STATUSES = ["open", "in_progress", "blocked", "deferred", "closed"]
-EDIT_WIDTH = 100  # text wraps at the terminal width, but no wider than this
+EDIT_WIDTH = 100  # outside fzf (no pane to fill), text wraps at most this wide
+REVERSE = "\x1b[7m"
 
 
 def wrap_segments(text, width):
@@ -629,26 +632,125 @@ def locate(pos, spots):
     return len(spots) - 1
 
 
-def ansi_runs(text, x):
-    """A line with SGR codes as (x, text, curses attribute) runs."""
-    runs, attr, pos = [], 0, 0
+def visible_len(text):
+    return len(ANSI.sub("", text))
+
+
+def clip(text, width):
+    """`text` (with SGR codes) cut or padded to exactly `width` columns."""
+    out, col, pos = [], 0, 0
     for m in list(ANSI.finditer(text)) + [None]:
         end = m.start() if m else len(text)
-        if end > pos:
-            runs.append((x, text[pos:end], attr))
-            x += end - pos
+        chunk = text[pos:end][:max(width - col, 0)]
+        out.append(chunk)
+        col += len(chunk)
         if m is None:
-            return runs
-        for code in [int(c) for c in m.group()[2:-1].split(";") if c] or [0]:
-            if code == 0:
-                attr = 0
-            elif code == 1:
-                attr |= curses.A_BOLD
-            elif code == 2:
-                attr |= curses.A_DIM
-            elif 31 <= code <= 37:
-                attr = (attr & ~curses.A_COLOR) | curses.color_pair(code - 30)
+            break
+        out.append(m.group())
         pos = m.end()
+    return "".join(out) + RESET + " " * (width - col)
+
+
+def join_runs(runs):
+    """A row from (x, text, sgr) runs, the gaps filled with spaces."""
+    line, col = "", 0
+    for x, text, sgr in sorted(runs, key=lambda run: run[0]):
+        if x > col:
+            line, col = line + " " * (x - col), x
+        line += f"{sgr}{text}{RESET}" if sgr else text
+        col += visible_len(text)
+    return line
+
+
+class Term:
+    """Raw keys from, and ANSI to, the terminal. Inside fzf it draws over
+    fzf's screen; outside (`beads-view edit ID`) on a screen of its own."""
+
+    def __init__(self, own_screen):
+        import select, termios, tty
+        self.select, self.termios, self.tty = select.select, termios, tty
+        self.fd = os.open("/dev/tty", os.O_RDWR)
+        self.saved = termios.tcgetattr(self.fd)
+        self.own_screen, self.pending = own_screen, b""
+
+    def start(self):
+        self.tty.setraw(self.fd)
+        # Over fzf, the cursor goes back where fzf left it (fzf inline draws
+        # from there). Mouse clicks (SGR coordinates), bracketed paste, no wrap.
+        self.write(("\x1b[?1049h\x1b[2J" if self.own_screen else "\x1b7")
+                   + "\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?7l")
+
+    def stop(self):
+        self.write("\x1b[?7h\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[0m\x1b[?25h"
+                   + ("\x1b[?1049l" if self.own_screen else "\x1b8"))
+        self.termios.tcsetattr(self.fd, self.termios.TCSADRAIN, self.saved)
+
+    def size(self):
+        size = os.get_terminal_size(self.fd)
+        return size.lines, size.columns
+
+    def write(self, text):
+        data = text.encode()
+        while data:
+            data = data[os.write(self.fd, data):]
+
+    def byte(self):
+        while not self.pending:
+            self.pending = os.read(self.fd, 4096)
+        b, self.pending = self.pending[0], self.pending[1:]
+        return b
+
+    def ready(self, timeout):
+        return bool(self.pending) or bool(self.select([self.fd], [], [], timeout)[0])
+
+    def key(self):
+        """The next key: a character, a name ("up", "btab", "esc", …),
+        ("mouse", button, x, y, pressed) or ("paste", text); None for keys
+        the editor doesn't use (Alt+letter, …)."""
+        b = self.byte()
+        if b == 0x1b:
+            if not self.ready(0.03):  # nothing follows: Esc itself
+                return "esc"
+            b = self.byte()
+            if b == ord("["):
+                return self.csi()
+            if b == ord("O"):
+                return {"A": "up", "B": "down", "C": "right", "D": "left",
+                        "H": "home", "F": "end"}.get(chr(self.byte()))
+            return None
+        if b < 0x80:
+            return chr(b)
+        size = 2 if b < 0xe0 else 3 if b < 0xf0 else 4  # UTF-8
+        return (bytes([b]) + bytes(self.byte() for _ in range(size - 1))).decode("utf-8", "replace")
+
+    def csi(self):
+        seq = ""
+        while not seq or not "@" <= seq[-1] <= "~":
+            seq += chr(self.byte())
+        params, final = seq[:-1], seq[-1]
+        if params.startswith("<") and final in "Mm":
+            button, x, y = (int(n) for n in params[1:].split(";"))
+            return ("mouse", button, x - 1, y - 1, final == "M")
+        parts = params.split(";")
+        if final in "ABCD":
+            name = {"A": "up", "B": "down", "C": "right", "D": "left"}[final]
+            by_word = len(parts) > 1 and parts[1] in ("3", "5") and final in "CD"  # Alt/Ctrl+arrow
+            return "w" + name if by_word else name
+        if final in "HF":
+            return "home" if final == "H" else "end"
+        if final == "Z":
+            return "btab"
+        if final == "~":
+            if parts[0] == "200":
+                return ("paste", self.paste())
+            return {"1": "home", "7": "home", "4": "end", "8": "end", "3": "delete"}.get(parts[0])
+        return None
+
+    def paste(self):
+        data = b""
+        while not data.endswith(b"\x1b[201~"):
+            data += bytes([self.byte()])
+        return data[:-6].decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
 class Field:
@@ -670,8 +772,9 @@ class Field:
 
 
 class Editor:
-    def __init__(self, scr, issue, state):
-        self.scr, self.issue, self.state = scr, issue, state
+    def __init__(self, term, issue, state, region, border):
+        self.term, self.issue, self.state = term, issue, state
+        self.region, self.border = region, border  # (top, left, height, width); fzf's pane border
         labels = issue.get("labels") or []
         self.readonly = grouped(l for l in labels if matches(l, config()["readonly_labels"]))
         status, priority = issue.get("status") or "open", issue.get("priority", 2)
@@ -699,58 +802,53 @@ class Editor:
     # Layout and drawing
 
     def layout(self, width):
-        """The document as rows of (x, text, attr) runs; sets the fields' spots."""
-        A = curses
-        accent = A.color_pair(6) | A.A_BOLD
+        """The document as rows of (x, text, sgr) runs; sets the fields' spots."""
+        accent = BOLD + ACCENT
         rows, prefix = [], issue_prefix()
         for f in self.fields:
             f.spots = []
 
         def key(name, *fields):  # a row label; highlighted while its field has focus
-            return (0, name.ljust(KEY_WIDTH - 1), accent if self.current in fields else A.A_DIM)
+            return (0, name.ljust(KEY_WIDTH - 1), accent if self.current in fields else DIM)
 
-        def text(f, x, attr=0, lead=(), placeholder=""):
-            attrs = [attr] * len(f.value)
+        def text(f, x, sgr="", lead=(), placeholder=""):
+            sgrs = [sgr] * len(f.value)
             if f.name == "labels":  # namespaces dimmed, as in the pane
                 for m in re.finditer(r"\S+", f.value):
-                    ns = m.group().find(":")
-                    for i in range(m.start(), m.start() + ns + 1):
-                        attrs[i] = A.A_DIM
+                    for i in range(m.start(), m.start() + m.group().find(":") + 1):
+                        sgrs[i] = DIM
             for i, (start, end) in enumerate(wrap_segments(f.value, max(width - x - 1, 10))):
                 row, j = list(lead) if i == 0 else [], start
                 while j < end:  # runs of equal attributes
                     k = j
-                    while k < end and attrs[k] == attrs[j]:
+                    while k < end and sgrs[k] == sgrs[j]:
                         k += 1
-                    row.append((x + j - start, f.value[j:k], attrs[j]))
+                    row.append((x + j - start, f.value[j:k], sgrs[j]))
                     j = k
                 f.spots.append((len(rows), x, start, end))
                 rows.append(row)
             if not f.value and placeholder and f is not self.current:
-                rows[-1].append((x, placeholder, A.A_DIM))
+                rows[-1].append((x, placeholder, DIM))
 
         title, status, priority = self.by_name["title"], self.by_name["status"], self.by_name["priority"]
-        text(title, 0, A.A_BOLD, placeholder="Title")
-        rows += [[(0, self.issue.get("id", ""), A.A_DIM)], []]
+        text(title, 0, BOLD, placeholder="Title")
+        rows += [[(0, self.issue.get("id", ""), DIM)], []]
         row, x = [key("status", status, priority)], KEY_WIDTH
         for f, shown in ((status, status_text(status.value)), (priority, priority_text(priority.value))):
-            runs = ansi_runs(shown, x)
-            if f is self.current:
-                runs = [(rx, t, a | A.A_REVERSE) for rx, t, a in runs]
-            size = len(ANSI.sub("", shown))
+            size = visible_len(shown)
+            row.append((x, shown, REVERSE if f is self.current else ""))
             f.spots.append((len(rows), x, 0, size))
-            row += runs
             x += size + 3
-        row.append((x, self.issue.get("issue_type", ""), A.A_DIM))
+        row.append((x, self.issue.get("issue_type", ""), DIM))
         if self.issue.get("assignee"):
-            row.append((x + len(self.issue.get("issue_type", "")) + 3, "@" + self.issue["assignee"], 0))
+            row.append((x + len(self.issue.get("issue_type", "")) + 3, "@" + self.issue["assignee"], ""))
         rows.append(row)
         for name, value in relation_rows(self.issue, max(width - KEY_WIDTH, 20), prefix):
-            rows.append([key(name)] + ansi_runs(value, KEY_WIDTH))
+            rows.append([key(name), (KEY_WIDTH, value, "")])
         labels = self.by_name["labels"]
         text(labels, KEY_WIDTH, lead=[key("labels", labels)], placeholder="none")
         if self.readonly:
-            rows.append([(KEY_WIDTH, "  ".join(self.readonly) + "  (read-only)", A.A_DIM)])
+            rows.append([(KEY_WIDTH, "  ".join(self.readonly) + "  (read-only)", DIM)])
         for name, heading in TEXT_SECTIONS:
             if name in self.by_name:
                 rows.append([])
@@ -779,9 +877,9 @@ class Editor:
         row, x, start, _ = f.spots[locate(f.pos, f.spots)]
         return row, x + f.pos - start
 
-    def draw(self):
-        height, width = self.scr.getmaxyx()
-        rows, body = self.layout(min(width, EDIT_WIDTH)), height - 1
+    def draw(self, footer=None):
+        top, left, height, width = self.region
+        rows, body = self.layout(width), height - 1
         cur = self.cursor()
         if self.follow:  # keep the field (the cursor's line) in view
             target = cur[0] if cur else self.current.spots[0][0]
@@ -790,28 +888,19 @@ class Editor:
             elif target >= self.top + body:
                 self.top = target - body + 1
         self.top = max(0, min(self.top, len(rows) - body))
-        self.scr.erase()
-        for y in range(min(body, len(rows) - self.top)):
-            for x, part, attr in rows[self.top + y]:
-                if x < width:
-                    try:
-                        self.scr.addnstr(y, x, part, width - x, attr)
-                    except curses.error:
-                        pass  # writing the bottom-right cell
-        if self.message:
-            line, attr = self.message, curses.color_pair(1) | curses.A_BOLD
-        else:
-            line, attr = ("● modified · " if self.dirty else "") + self.footer(), curses.A_DIM
-        try:
-            self.scr.addnstr(height - 1, 0, line, width - 1, attr)
-        except curses.error:
-            pass
+        out = ["\x1b[?25l"]
+        for y in range(body):
+            i = self.top + y
+            out.append(f"\x1b[{top + y + 1};{left + 1}H" + clip(join_runs(rows[i]) if i < len(rows) else "", width))
+        if footer is None:
+            footer = (f"{BOLD}\x1b[31m{self.message}" if self.message else
+                      f"{DIM}{'● modified · ' if self.dirty else ''}{self.footer()}")
+        out.append(f"\x1b[{top + height};{left + 1}H" + clip(footer, width))
+        if self.border and left >= 2:  # fzf's pane border, lit while editing
+            out += [f"\x1b[{top + y + 1};{left - 1}H{ACCENT}│{RESET}" for y in range(height)]
         if cur and 0 <= cur[0] - self.top < body:
-            curses.curs_set(1)
-            self.scr.move(cur[0] - self.top, min(cur[1], width - 1))
-        else:
-            curses.curs_set(0)
-        self.scr.refresh()
+            out.append(f"\x1b[{top + cur[0] - self.top + 1};{left + min(cur[1], width - 1) + 1}H\x1b[?25h")
+        self.term.write("".join(out))
 
     # Keys
 
@@ -819,47 +908,30 @@ class Editor:
         """Edit until saved (True) or cancelled (False)."""
         while True:
             self.draw()
-            try:
-                key = self.scr.get_wch()
-            except curses.error:
-                continue
-            if key == curses.KEY_RESIZE:
+            key = self.term.key()
+            if key is None:
                 continue
             self.message, self.follow = "", True
             if key != "\x13":
                 self.overwrite = False
-            if key == curses.KEY_MOUSE:
-                self.mouse()
+            if isinstance(key, tuple) and key[0] == "mouse":
+                self.mouse(*key[1:])
+            elif isinstance(key, tuple):
+                self.paste(key[1])
             elif key == "\x13":  # ctrl-s
                 if self.save():
                     return True
-            elif key == "\x1b" and self.sequence():
-                pass  # an escape sequence curses doesn't know (Alt+key, …): ignored
-            elif key in ("\x1b", "\x03"):  # esc, ctrl-c
+            elif key in ("esc", "\x03"):  # ctrl-c too
                 if not self.dirty or self.confirm("Discard your changes? y/n"):
                     return False
             elif key == "\t":
                 self.go(self.focus + 1)
-            elif key == curses.KEY_BTAB:
+            elif key == "btab":
                 self.go(self.focus - 1)
             elif self.current.options is not None:
                 self.choose(key)
             else:
                 self.type(key)
-
-    def sequence(self):
-        """After an Esc: whether more input follows at once (then drop it)."""
-        self.scr.nodelay(True)
-        rest = False
-        try:
-            while True:
-                self.scr.get_wch()
-                rest = True
-        except curses.error:
-            pass
-        finally:
-            self.scr.nodelay(False)
-        return rest
 
     def go(self, index, pos=None):
         self.focus = index % len(self.fields)
@@ -889,55 +961,52 @@ class Editor:
     def choose(self, key):
         f = self.current
         i = f.options.index(f.value)
-        if key in (curses.KEY_RIGHT, " "):
+        if key in ("right", " "):
             f.value = f.options[(i + 1) % len(f.options)]
-        elif key == curses.KEY_LEFT:
+        elif key == "left":
             f.value = f.options[(i - 1) % len(f.options)]
-        elif key in (curses.KEY_UP, curses.KEY_DOWN):
-            self.vertical(-1 if key == curses.KEY_UP else 1)
-        elif key in ("\n", "\r", curses.KEY_ENTER):
+        elif key in ("up", "down"):
+            self.vertical(-1 if key == "up" else 1)
+        elif key in ("\r", "\n"):
             self.go(self.focus + 1)
-        elif isinstance(key, str) and f.name == "priority" and key in "01234":
+        elif f.name == "priority" and key in tuple("01234"):
             f.value = int(key)
-        elif isinstance(key, str) and f.name == "status":
+        elif f.name == "status" and len(key) == 1:
             f.value = next((o for o in f.options if o.startswith(key.lower())), f.value)
 
     def type(self, key):
         f = self.current
         v, p = f.value, f.pos
-        name = curses.keyname(key) if isinstance(key, int) else b""
-        if key in ("\n", "\r", curses.KEY_ENTER):
-            if f.multiline:
-                v, p = v[:p] + "\n" + v[p:], p + 1
-            else:
+        if key in ("\r", "\n"):
+            if not f.multiline:
                 self.go(self.focus + 1)
                 return
-        elif key in (curses.KEY_BACKSPACE, "\x7f", "\x08"):
+            v, p = v[:p] + "\n" + v[p:], p + 1
+        elif key in ("\x7f", "\x08"):
             if p:
                 v, p = v[:p - 1] + v[p:], p - 1
-        elif key in (curses.KEY_DC, "\x04"):
+        elif key in ("delete", "\x04"):
             v = v[:p] + v[p + 1:]
-        elif key == curses.KEY_LEFT:
+        elif key == "left":
             p = max(p - 1, 0)
-        elif key == curses.KEY_RIGHT:
+        elif key == "right":
             p = min(p + 1, len(v))
-        elif name in (b"kLFT3", b"kLFT5", b"kRIT3", b"kRIT5"):  # alt/ctrl-arrows: by word
-            if name.startswith(b"kLFT"):
-                while p and not v[p - 1].isalnum():
-                    p -= 1
-                while p and v[p - 1].isalnum():
-                    p -= 1
-            else:
-                while p < len(v) and not v[p].isalnum():
-                    p += 1
-                while p < len(v) and v[p].isalnum():
-                    p += 1
-        elif key in (curses.KEY_UP, curses.KEY_DOWN):
-            self.vertical(-1 if key == curses.KEY_UP else 1)
+        elif key == "wleft":
+            while p and not v[p - 1].isalnum():
+                p -= 1
+            while p and v[p - 1].isalnum():
+                p -= 1
+        elif key == "wright":
+            while p < len(v) and not v[p].isalnum():
+                p += 1
+            while p < len(v) and v[p].isalnum():
+                p += 1
+        elif key in ("up", "down"):
+            self.vertical(-1 if key == "up" else 1)
             return
-        elif key in (curses.KEY_HOME, "\x01"):
+        elif key in ("home", "\x01"):
             p = v.rfind("\n", 0, p) + 1
-        elif key == curses.KEY_END:
+        elif key == "end":
             end = v.find("\n", p)
             p = len(v) if end < 0 else end
         elif key == "\x0b":  # ctrl-k: to the end of the line
@@ -959,60 +1028,55 @@ class Editor:
         elif key == "\x0c" and f.name == "labels":  # ctrl-l
             self.pick(f)
             return
-        elif isinstance(key, str) and key.isprintable():
-            v, p = v[:p] + key + v[p:], p + len(key)
+        elif len(key) == 1 and key.isprintable():
+            v, p = v[:p] + key + v[p:], p + 1
         else:
             return
         f.value, f.pos = v, p
 
-    def mouse(self):
-        try:
-            _, mx, my, _, bstate = curses.getmouse()
-        except curses.error:
+    def paste(self, text):
+        f = self.current
+        if f.options is not None:
             return
-        if bstate & curses.BUTTON4_PRESSED:  # the wheel scrolls; the cursor stays
+        if not f.multiline:
+            text = " ".join(text.split("\n"))
+        f.value, f.pos = f.value[:f.pos] + text + f.value[f.pos:], f.pos + len(text)
+
+    def mouse(self, button, x, y, pressed):
+        top, left, height, width = self.region
+        if button == 64:  # the wheel scrolls; the cursor stays
             self.top, self.follow = max(self.top - 3, 0), False
-        elif bstate & getattr(curses, "BUTTON5_PRESSED", 0x200000):
+        elif button == 65:
             self.top, self.follow = self.top + 3, False
-        elif bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):  # ncurses may merge press and release
-            row = my + self.top
+        elif button == 0 and pressed and 0 <= x - left < width and 0 <= y - top < height - 1:
+            mx, row = x - left, y - top + self.top
             for index, f in enumerate(self.fields):
-                for i, (spot_row, x, start, end) in enumerate(f.spots):
+                for i, (spot_row, fx, start, end) in enumerate(f.spots):
                     if spot_row != row:
                         continue
                     if f.options is not None:
-                        if x <= mx < x + end:
+                        if fx <= mx < fx + end:
                             if index == self.focus:  # a click on the focused choice changes it
-                                self.choose(curses.KEY_RIGHT)
+                                self.choose("right")
                             self.focus = index
                             return
-                    elif mx >= x:
+                    elif mx >= fx:
                         wrapped = i + 1 < len(f.spots) and f.spots[i + 1][2] == end
                         self.focus = index
-                        f.pos = min(start + mx - x, end - 1 if wrapped and end > start else end)
+                        f.pos = min(start + mx - fx, end - 1 if wrapped and end > start else end)
                         return
 
     def confirm(self, question):
-        height, width = self.scr.getmaxyx()
-        self.scr.move(height - 1, 0)
-        self.scr.clrtoeol()
-        self.scr.addnstr(height - 1, 0, question, width - 1, curses.color_pair(3) | curses.A_BOLD)
-        self.scr.refresh()
-        try:
-            return self.scr.get_wch() in ("y", "Y")
-        except curses.error:
-            return False
+        self.draw(footer=f"{BOLD}\x1b[33m{question}")
+        return self.term.key() in ("y", "Y")
 
     def suspended(self, run):
         """Run `run` with the terminal handed back (an editor, fzf)."""
-        curses.def_prog_mode()
-        curses.endwin()
+        self.term.stop()
         try:
             return run()
         finally:
-            curses.reset_prog_mode()
-            curses.mousemask(curses.ALL_MOUSE_EVENTS)
-            self.scr.clear()
+            self.term.start()
 
     def external(self, f):
         """Ctrl-E: edit the field in $VISUAL / $EDITOR."""
@@ -1110,26 +1174,24 @@ class Editor:
 
 
 def edit(bead_id, state):
-    """The editor for one bead, full screen; saves with bd on Ctrl-S."""
-    global curses
-    import curses
+    """The editor for one bead: in fzf's preview pane when fzf passes its
+    place (the pane open), else full screen. Saves with bd on Ctrl-S."""
     issue = show_issue(bead_id)
     if issue is None:
         return
-
-    def main(scr):
-        curses.raw()  # Ctrl-S and Ctrl-C reach the editor, not the terminal
-        if hasattr(curses, "set_escdelay"):
-            curses.set_escdelay(25)  # Esc cancels at once
-        curses.use_default_colors()
-        for color in range(1, 8):  # the terminal's palette, as the pane uses it
-            curses.init_pair(color, color, -1)
-        curses.mousemask(curses.ALL_MOUSE_EVENTS)
-        curses.mouseinterval(0)
-        scr.keypad(True)
-        return Editor(scr, issue, state).run()
-
-    curses.wrapper(main)
+    pane = [os.environ.get(f"FZF_PREVIEW_{k}", "") for k in ("TOP", "LEFT", "LINES", "COLUMNS")]
+    in_pane = all(v.isdigit() for v in pane)
+    term = Term(own_screen=not in_pane)
+    if in_pane:
+        region = tuple(int(v) for v in pane)
+    else:
+        lines, columns = term.size()
+        region = (0, 0, lines, min(columns, EDIT_WIDTH))
+    term.start()
+    try:
+        Editor(term, issue, state, region, border=in_pane).run()
+    finally:
+        term.stop()
 
 
 def prefetch(state, budget):
@@ -1189,9 +1251,13 @@ RUN = f"{PY} -S {SELF}"  # how fzf's bindings call this script (-S: skip site, f
 def view():
     # The header changes before the (asynchronous) reload; after it, fzf drops it.
     reload = f"transform-header({RUN} header)+reload({RUN} render)"
-    edit = f"execute({RUN} edit {{1}})+reload({RUN} render --fresh)"
+    # Edit in the detail pane: shown first (Ctrl-E with it hidden), so fzf
+    # passes its place to the editor.
+    edit = f"show-preview+execute({RUN} edit {{1}})+reload({RUN} render --fresh)"
     args = [
-        FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
+        # Inline (all but one line), not full screen: then fzf leaves the tree
+        # on screen while a command runs, and the editor draws over the pane.
+        FZF, "--height=-1", "--ansi", "--layout=reverse", "--no-sort", "--track",
         "--delimiter=\t", "--with-nth=5..", "--id-nth=1", "--listen",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
         "--footer-border=none", "--ellipsis=…",
