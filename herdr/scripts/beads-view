@@ -547,6 +547,7 @@ def edit_labels(bead_id, state):
         cmd += ["--remove-label", label]
     subprocess.run([BD, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
     forget_detail(bead_id)
+    fetch(state, fresh=True)  # so fzf's reload after this reads the cache
 
 
 def pick_labels(bead_id, current, state):
@@ -663,27 +664,55 @@ def join_runs(runs):
 
 
 class Term:
-    """Raw keys from, and ANSI to, the terminal. Inside fzf it draws over
-    fzf's screen; outside (`beads-view edit ID`) on a screen of its own."""
+    """Raw keys from, and ANSI to, the terminal.
 
-    def __init__(self, own_screen):
+    Over fzf: fzf (inline) runs a command on the alternate screen, its own
+    drawing kept on the main screen; the editor switches back to the main
+    screen, so the tree stays in view, and draws over the pane. On leaving it
+    returns to the alternate screen with the cursor where fzf left it, as
+    fzf restores that and draws from there. Outside fzf (`beads-view edit
+    ID`) it uses the alternate screen, cleared."""
+
+    def __init__(self, over_fzf):
         import select, termios, tty
         self.select, self.termios, self.tty = select.select, termios, tty
         self.fd = os.open("/dev/tty", os.O_RDWR)
         self.saved = termios.tcgetattr(self.fd)
-        self.own_screen, self.pending = own_screen, b""
+        self.over_fzf, self.pending, self.home = over_fzf, b"", None
 
     def start(self):
         self.tty.setraw(self.fd)
-        # Over fzf, the cursor goes back where fzf left it (fzf inline draws
-        # from there). Mouse clicks (SGR coordinates), bracketed paste, no wrap.
-        self.write(("\x1b[?1049h\x1b[2J" if self.own_screen else "\x1b7")
-                   + "\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?7l")
+        if self.over_fzf:
+            self.write("\x1b[?1049l")
+            if self.home is None:
+                self.home = self.position()
+        else:
+            self.write("\x1b[?1049h\x1b[2J")
+        # Mouse clicks (SGR coordinates), bracketed paste, no line wrap.
+        self.write("\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?7l")
 
     def stop(self):
-        self.write("\x1b[?7h\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[0m\x1b[?25h"
-                   + ("\x1b[?1049l" if self.own_screen else "\x1b8"))
+        self.write("\x1b[?7h\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[0m\x1b[?25h")
+        if self.over_fzf and self.home:
+            self.write(f"\x1b[{self.home[0]};{self.home[1]}H\x1b[?1049h")
+        elif not self.over_fzf:
+            self.write("\x1b[?1049l")
         self.termios.tcsetattr(self.fd, self.termios.TCSADRAIN, self.saved)
+
+    def position(self):
+        """The cursor's (row, column), 1-based, asked of the terminal; keys
+        typed meanwhile stay pending."""
+        self.write("\x1b[6n")
+        data, deadline = self.pending, time.monotonic() + 1
+        while time.monotonic() < deadline:
+            m = re.search(rb"\x1b\[(\d+);(\d+)R", data)
+            if m:
+                self.pending = data[:m.start()] + data[m.end():]
+                return int(m.group(1)), int(m.group(2))
+            if self.select([self.fd], [], [], 0.05)[0]:
+                data += os.read(self.fd, 4096)
+        self.pending = data
+        return None
 
     def size(self):
         size = os.get_terminal_size(self.fd)
@@ -1170,6 +1199,10 @@ class Editor:
             self.message = "bd: " + ((out.stderr or out.stdout).strip().splitlines() or ["update failed"])[-1]
             return False
         forget_detail(self.issue["id"])
+        # The cache now, while "Saving…" shows: fzf reloads from it at once.
+        # A reload that ran bd itself would leave fzf's list empty for a
+        # moment, and a key pressed then (Right again) would act on no bead.
+        fetch(self.state, fresh=True)
         return True
 
 
@@ -1181,7 +1214,7 @@ def edit(bead_id, state):
         return
     pane = [os.environ.get(f"FZF_PREVIEW_{k}", "") for k in ("TOP", "LEFT", "LINES", "COLUMNS")]
     in_pane = all(v.isdigit() for v in pane)
-    term = Term(own_screen=not in_pane)
+    term = Term(over_fzf=in_pane)
     if in_pane:
         region = tuple(int(v) for v in pane)
     else:
@@ -1253,7 +1286,7 @@ def view():
     reload = f"transform-header({RUN} header)+reload({RUN} render)"
     # Edit in the detail pane: shown first (Ctrl-E with it hidden), so fzf
     # passes its place to the editor.
-    edit = f"show-preview+execute({RUN} edit {{1}})+reload({RUN} render --fresh)"
+    edit = f"show-preview+execute({RUN} edit {{1}})+reload({RUN} render)"
     args = [
         # Inline (all but one line), not full screen: then fzf leaves the tree
         # on screen while a command runs, and the editor draws over the pane.
@@ -1275,7 +1308,7 @@ def view():
         f"--bind=double-click:execute-silent({RUN} focus {{1}})+{reload}+first",
         f"--bind=backward-eof:execute-silent({RUN} up)+{reload}",
         f"--bind=ctrl-a:execute-silent({RUN} all)+{reload}",
-        f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render --fresh)",
+        f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render)",
         f"--bind=ctrl-e:{edit}",
         "--bind=esc:abort",
     ]
@@ -1344,10 +1377,9 @@ def main(argv):
     elif cmd == "all":
         state["all"] = not state["all"]
         save(state)
-    elif cmd == "labels" and rest:
-        edit_labels(rest[0], state)
-    elif cmd == "edit" and rest and rest[0]:
-        edit(rest[0], state)
+    elif cmd in ("labels", "edit"):
+        if rest and rest[0]:  # empty while fzf's list (re)loads: nothing to edit
+            (edit_labels if cmd == "labels" else edit)(rest[0], state)
     elif cmd == "watch":
         watch()
     else:
