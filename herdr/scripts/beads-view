@@ -11,6 +11,12 @@ children, 1-9 folds the tree to that many levels and 0 unfolds it all, Ctrl-L
 edits the bead's labels, Ctrl-A switches between open and all beads, typing
 filters, Esc quits. The view refreshes by itself when beads change.
 
+Right on a bead whose details show (or Ctrl-E anywhere) edits it in place: the
+same layout, full screen, with the title, status, priority, labels and text
+editable. Tab, Up and Down move between fields (a click too); Left/Right or
+a digit/letter changes status and priority; Ctrl-E hands a text to $EDITOR,
+Ctrl-L picks labels; Ctrl-S saves with one `bd update`, Esc cancels.
+
 IDs are shown relative to their parent (`proj-erd.12.18` under `proj-erd.12`
 shows as `.18`; at the top the repo's issue prefix is dropped). Rows end with
 the bead's labels, leaving out labels that every row in the view shares.
@@ -23,7 +29,7 @@ Optional settings in ~/.config/beads-view/config.json (all keys optional):
 Focus, folds and the open/all choice are remembered per repo in
 ~/.local/state/beads-view/; bd's output is cached in ~/.cache/beads-view/ so
 keys respond without waiting for bd (safe to delete). Subcommands (render, header, toggle, level, focus,
-up, all, show, labels, watch) are called by fzf's key bindings; run without
+up, all, show, labels, edit, watch) are called by fzf's key bindings; run without
 arguments to start the view. Needs python3, bd and fzf (0.60 or later).
 """
 import fnmatch
@@ -391,39 +397,46 @@ def fit(text, room):
     return text if len(text) <= room else text[:max(room - 1, 1)].rstrip() + "…"
 
 
-def detail(bead_id, width=80):
-    """The preview pane: title, a header of labelled facts, then the text."""
+TEXT_SECTIONS = (("description", ""), ("design", "Design"),
+                 ("acceptance_criteria", "Acceptance"), ("notes", "Notes"))
+
+
+def show_issue(bead_id):
+    """`bd show` as a dict, or None. Only the bead itself: for an ID that no
+    longer exists, bd answers with a bead whose ID starts with it."""
     try:
         issue = json.loads(bd("show", bead_id, "--json") or "[]")
         issue = issue[0] if isinstance(issue, list) else issue
     except (ValueError, IndexError):
-        return bd("show", bead_id)
-    prefix, room = issue_prefix(), max(width - KEY_WIDTH, 20)
-    deps = issue.get("dependencies") or []
-    # The full ID under the title: this pane shows one bead out of the tree.
-    lines = [f"{BOLD}{issue.get('title', '')}{RESET}", f"{DIM}{bead_id}{RESET}", ""]
+        return None
+    return issue if isinstance(issue, dict) and issue.get("id") == bead_id else None
 
-    def row(key, value):  # the label only on a group's first line
-        lines.append(f"{DIM}{key.ljust(KEY_WIDTH - 1)}{RESET} {value}")
 
-    def ref(dep):  # another bead: status, short ID, title; a done one dimmed
-        status, short = dep.get("status", ""), short_id(dep["id"], "", prefix)
-        title = fit(dep.get("title", ""), room - len(short) - 4)
-        if status == "closed":
-            return f"{DIM}✓ {short}  {title}{RESET}"
-        return f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')}{RESET} {BOLD}{short}{RESET}  {title}"
+def status_text(status):
+    return f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')} {status.replace('_', ' ')}{RESET}"
 
-    status, priority = issue.get("status", ""), issue.get("priority")
-    facts = [f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')} {status.replace('_', ' ')}{RESET}",
-             f"{PRIORITY_COLOR.get(priority, '')}P{priority}{RESET}",
-             f"{DIM}{issue.get('issue_type', '')}{RESET}"]
-    if issue.get("assignee"):
-        facts.append(f"@{issue['assignee']}")
-    row("status", "   ".join(facts))
+
+def priority_text(priority):
+    return f"{PRIORITY_COLOR.get(priority, '')}P{priority}{RESET}"
+
+
+def ref(dep, room, prefix):
+    """Another bead: status, short ID, title; a done one dimmed."""
+    status, short = dep.get("status", ""), short_id(dep["id"], "", prefix)
+    title = fit(dep.get("title", ""), room - len(short) - 4)
+    if status == "closed":
+        return f"{DIM}✓ {short}  {title}{RESET}"
+    return f"{STATUS_COLOR.get(status, '')}{STATUS_SYMBOL.get(status, '')}{RESET} {BOLD}{short}{RESET}  {title}"
+
+
+def relation_rows(issue, room, prefix):
+    """(key, value) rows for the parent and the other related beads; the key
+    only on a group's first row. Open blockers first: they are what keeps
+    the bead from starting."""
+    deps, rows = issue.get("dependencies") or [], []
     parent = next((d for d in deps if d.get("dependency_type") == "parent-child"), None)
     if parent:
-        row("parent", ref(parent))
-    # Open blockers first: they are what keeps this bead from starting.
+        rows.append(("parent", ref(parent, room, prefix)))
     groups = {}
     for dep in sorted(deps, key=lambda d: d.get("status") == "closed"):
         kind = dep.get("dependency_type") or ""
@@ -431,7 +444,30 @@ def detail(bead_id, width=80):
             groups.setdefault("blocked by" if kind == "blocks" else kind.replace("-", " "), []).append(dep)
     for key, group in groups.items():
         for i, dep in enumerate(group):
-            row(key if i == 0 else "", ref(dep))
+            rows.append((key if i == 0 else "", ref(dep, room, prefix)))
+    return rows
+
+
+def detail(bead_id, width=80):
+    """The preview pane: title, a header of labelled facts, then the text."""
+    issue = show_issue(bead_id)
+    if issue is None:
+        return bd("show", bead_id)
+    prefix, room = issue_prefix(), max(width - KEY_WIDTH, 20)
+    # The full ID under the title: this pane shows one bead out of the tree.
+    lines = [f"{BOLD}{issue.get('title', '')}{RESET}", f"{DIM}{bead_id}{RESET}", ""]
+
+    def row(key, value):  # the label only on a group's first line
+        lines.append(f"{DIM}{key.ljust(KEY_WIDTH - 1)}{RESET} {value}")
+
+    priority = issue.get("priority")
+    facts = [status_text(issue.get("status", "")), priority_text(priority),
+             f"{DIM}{issue.get('issue_type', '')}{RESET}"]
+    if issue.get("assignee"):
+        facts.append(f"@{issue['assignee']}")
+    row("status", "   ".join(facts))
+    for key, value in relation_rows(issue, room, prefix):
+        row(key, value)
     # Labels by namespace, one line each (`owner  jochen`), plain ones first.
     labels = sorted(issue.get("labels") or [])
     by_ns = {}
@@ -447,8 +483,7 @@ def detail(bead_id, width=80):
         for i, part in enumerate(wrapped):
             row(key, (lead if i == 0 else " " * indent) + part)
             key = ""
-    for key, heading in (("description", ""), ("design", "Design"),
-                         ("acceptance_criteria", "Acceptance"), ("notes", "Notes")):
+    for key, heading in TEXT_SECTIONS:
         text = reflow(issue.get(key, ""))
         if text:
             lines.append("")
@@ -487,30 +522,49 @@ def forget_detail(bead_id):
             pass
 
 
+def grouped(labels):
+    """Plain labels first, then by namespace (`owner:…`)."""
+    return sorted(labels, key=lambda l: (":" in l, l.split(":", 1)[0] if ":" in l else "", l))
+
+
 def edit_labels(bead_id, state):
-    """Multi-select the bead's labels in fzf; apply the difference with bd.
+    """Ctrl-L: pick the bead's labels, apply the difference with bd."""
+    issue = show_issue(bead_id)
+    if issue is None:
+        return
+    readonly = config()["readonly_labels"]
+    editable = [l for l in issue.get("labels") or [] if not matches(l, readonly)]
+    wanted = pick_labels(bead_id, editable, state)
+    if wanted is None:
+        return
+    add, remove = sorted(set(wanted) - set(editable)), sorted(set(editable) - set(wanted))
+    if not add and not remove:
+        return
+    cmd = ["update", bead_id]
+    for label in add:
+        cmd += ["--add-label", label]
+    for label in remove:
+        cmd += ["--remove-label", label]
+    subprocess.run([BD, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
+    forget_detail(bead_id)
+
+
+def pick_labels(bead_id, current, state):
+    """Multi-select labels in fzf, starting from `current` (the editable ones);
+    the labels wanted, or None when cancelled.
 
     Offers the labels in use on the view's beads (open ones in the open view),
     not `bd label list-all`, which also counts closed beads and so keeps
     offering labels long retired; any other label can still be typed."""
     cfg = config()
-    try:
-        issue = json.loads(bd("show", bead_id, "--json") or "[]")
-        issue = issue[0] if isinstance(issue, list) else issue
-        current = sorted(issue.get("labels") or [])
-    except (ValueError, KeyError, IndexError):
-        return
     used = sorted({l for i in fetch(state)[1] for l in i.get("labels") or []})
     readonly = cfg["readonly_labels"]
-
-    def grouped(labels):  # plain labels first, then by namespace (`owner:…`)
-        return sorted(labels, key=lambda l: (":" in l, l.split(":", 1)[0] if ":" in l else "", l))
 
     def shown(label):  # the namespace dimmed, so each group reads as a block
         ns, sep, rest = label.partition(":")
         return f"{DIM}{ns}:{RESET}{rest}" if sep else label
 
-    editable = grouped(l for l in current if not matches(l, readonly))
+    editable = grouped(current)
     others = grouped(set(cfg["suggested_labels"] + used) - set(editable) - {""}
                      - {l for l in cfg["suggested_labels"] + used if matches(l, readonly)})
     choices = editable + others
@@ -531,7 +585,7 @@ def edit_labels(bead_id, state):
     proc = subprocess.run(args, input="\n".join(shown(c) for c in choices), text=True,
                           stdout=subprocess.PIPE)
     if proc.returncode not in (0, 1):  # Esc or an error: change nothing
-        return
+        return None
     lines = proc.stdout.split("\n")
     query, picked = lines[0].strip(), [ANSI.sub("", l) for l in lines[1:] if l]
     wanted = set() if "<none>" in picked else set(picked)
@@ -540,16 +594,542 @@ def edit_labels(bead_id, state):
     if query and not matches(query, readonly):
         if query in choices or not any(query.lower() in c.lower() for c in choices):
             wanted.add(query)
-    add, remove = sorted(wanted - set(editable)), sorted(set(editable) - wanted)
-    if not add and not remove:
+    return grouped(wanted)
+
+
+# The editor: the detail pane's layout, with the title, status, priority,
+# labels and text sections editable in place. curses, imported by edit() only.
+curses = None
+STATUSES = ["open", "in_progress", "blocked", "deferred", "closed"]
+EDIT_WIDTH = 100  # text wraps at the terminal width, but no wider than this
+
+
+def wrap_segments(text, width):
+    """Visual lines of `text` at `width`, as (start, end) indexes into it:
+    words wrap, newlines break. A wrapped line keeps its trailing space."""
+    out, start = [], 0
+    for line in text.split("\n"):
+        s, n = start, start + len(line)
+        while n - s > width:
+            cut = text.rfind(" ", s, s + width)
+            cut = s + width if cut <= s else cut + 1
+            out.append((s, cut))
+            s = cut
+        out.append((s, n))
+        start = n + 1
+    return out
+
+
+def locate(pos, spots):
+    """The index of the visual line (in a field's spots) holding the cursor
+    at `pos`; at a wrap, the cursor belongs to the next line."""
+    for i, (_, _, start, end) in enumerate(spots):
+        if start <= pos < end or (pos == end and (i + 1 == len(spots) or spots[i + 1][2] != end)):
+            return i
+    return len(spots) - 1
+
+
+def ansi_runs(text, x):
+    """A line with SGR codes as (x, text, curses attribute) runs."""
+    runs, attr, pos = [], 0, 0
+    for m in list(ANSI.finditer(text)) + [None]:
+        end = m.start() if m else len(text)
+        if end > pos:
+            runs.append((x, text[pos:end], attr))
+            x += end - pos
+        if m is None:
+            return runs
+        for code in [int(c) for c in m.group()[2:-1].split(";") if c] or [0]:
+            if code == 0:
+                attr = 0
+            elif code == 1:
+                attr |= curses.A_BOLD
+            elif code == 2:
+                attr |= curses.A_DIM
+            elif 31 <= code <= 37:
+                attr = (attr & ~curses.A_COLOR) | curses.color_pair(code - 30)
+        pos = m.end()
+
+
+class Field:
+    """An editable value: text (wrapped; `multiline` allows newlines), or one
+    of `options`. `spots` is where the last draw put it: (row, x, start, end)
+    per visual line, start and end being indexes into the text."""
+
+    def __init__(self, name, value, options=None, multiline=False):
+        self.name, self.value, self.original = name, value, value
+        self.options, self.multiline = options, multiline
+        self.pos = len(value) if options is None and name != "description" else 0
+        self.spots = []
+
+    @property
+    def changed(self):
+        if self.name == "labels":
+            return set(self.value.split()) != set(self.original.split())
+        return self.value != self.original
+
+
+class Editor:
+    def __init__(self, scr, issue, state):
+        self.scr, self.issue, self.state = scr, issue, state
+        labels = issue.get("labels") or []
+        self.readonly = grouped(l for l in labels if matches(l, config()["readonly_labels"]))
+        status, priority = issue.get("status") or "open", issue.get("priority", 2)
+        self.fields = [
+            Field("title", issue.get("title") or ""),
+            Field("status", status, options=STATUSES if status in STATUSES else [status] + STATUSES),
+            Field("priority", priority, options=sorted({0, 1, 2, 3, 4, priority}, key=str)),
+            Field("labels", " ".join(grouped(l for l in labels if l not in self.readonly))),
+        ]
+        for key, _ in TEXT_SECTIONS:  # description always, the others when set
+            if key == "description" or issue.get(key):
+                self.fields.append(Field(key, issue.get(key) or "", multiline=True))
+        self.by_name = {f.name: f for f in self.fields}
+        self.focus, self.top, self.follow, self.message = 0, 0, True, ""
+        self.overwrite = False  # a second Ctrl-S after a "changed meanwhile" warning
+
+    @property
+    def current(self):
+        return self.fields[self.focus]
+
+    @property
+    def dirty(self):
+        return any(f.changed for f in self.fields)
+
+    # Layout and drawing
+
+    def layout(self, width):
+        """The document as rows of (x, text, attr) runs; sets the fields' spots."""
+        A = curses
+        accent = A.color_pair(6) | A.A_BOLD
+        rows, prefix = [], issue_prefix()
+        for f in self.fields:
+            f.spots = []
+
+        def key(name, *fields):  # a row label; highlighted while its field has focus
+            return (0, name.ljust(KEY_WIDTH - 1), accent if self.current in fields else A.A_DIM)
+
+        def text(f, x, attr=0, lead=(), placeholder=""):
+            attrs = [attr] * len(f.value)
+            if f.name == "labels":  # namespaces dimmed, as in the pane
+                for m in re.finditer(r"\S+", f.value):
+                    ns = m.group().find(":")
+                    for i in range(m.start(), m.start() + ns + 1):
+                        attrs[i] = A.A_DIM
+            for i, (start, end) in enumerate(wrap_segments(f.value, max(width - x - 1, 10))):
+                row, j = list(lead) if i == 0 else [], start
+                while j < end:  # runs of equal attributes
+                    k = j
+                    while k < end and attrs[k] == attrs[j]:
+                        k += 1
+                    row.append((x + j - start, f.value[j:k], attrs[j]))
+                    j = k
+                f.spots.append((len(rows), x, start, end))
+                rows.append(row)
+            if not f.value and placeholder and f is not self.current:
+                rows[-1].append((x, placeholder, A.A_DIM))
+
+        title, status, priority = self.by_name["title"], self.by_name["status"], self.by_name["priority"]
+        text(title, 0, A.A_BOLD, placeholder="Title")
+        rows += [[(0, self.issue.get("id", ""), A.A_DIM)], []]
+        row, x = [key("status", status, priority)], KEY_WIDTH
+        for f, shown in ((status, status_text(status.value)), (priority, priority_text(priority.value))):
+            runs = ansi_runs(shown, x)
+            if f is self.current:
+                runs = [(rx, t, a | A.A_REVERSE) for rx, t, a in runs]
+            size = len(ANSI.sub("", shown))
+            f.spots.append((len(rows), x, 0, size))
+            row += runs
+            x += size + 3
+        row.append((x, self.issue.get("issue_type", ""), A.A_DIM))
+        if self.issue.get("assignee"):
+            row.append((x + len(self.issue.get("issue_type", "")) + 3, "@" + self.issue["assignee"], 0))
+        rows.append(row)
+        for name, value in relation_rows(self.issue, max(width - KEY_WIDTH, 20), prefix):
+            rows.append([key(name)] + ansi_runs(value, KEY_WIDTH))
+        labels = self.by_name["labels"]
+        text(labels, KEY_WIDTH, lead=[key("labels", labels)], placeholder="none")
+        if self.readonly:
+            rows.append([(KEY_WIDTH, "  ".join(self.readonly) + "  (read-only)", A.A_DIM)])
+        for name, heading in TEXT_SECTIONS:
+            if name in self.by_name:
+                rows.append([])
+                if heading:
+                    rows.append([(0, heading, accent)])
+                text(self.by_name[name], 0, placeholder="Description" if name == "description" else "")
+        return rows
+
+    def footer(self):
+        f = self.current
+        if f.name == "status":
+            hint = "←/→ or o i b d c change"
+        elif f.name == "priority":
+            hint = "←/→ or 0-4 change"
+        elif f.name == "labels":
+            hint = "space separates · ctrl-l pick"
+        else:
+            hint = ("enter new line · " if f.multiline else "") + "ctrl-e $EDITOR"
+        return f"{hint} · tab next field · ctrl-s save · esc cancel"
+
+    def cursor(self):
+        """The cursor's (row, x) in the document, or None on a choice."""
+        f = self.current
+        if f.options is not None or not f.spots:
+            return None
+        row, x, start, _ = f.spots[locate(f.pos, f.spots)]
+        return row, x + f.pos - start
+
+    def draw(self):
+        height, width = self.scr.getmaxyx()
+        rows, body = self.layout(min(width, EDIT_WIDTH)), height - 1
+        cur = self.cursor()
+        if self.follow:  # keep the field (the cursor's line) in view
+            target = cur[0] if cur else self.current.spots[0][0]
+            if target < self.top:
+                self.top = target
+            elif target >= self.top + body:
+                self.top = target - body + 1
+        self.top = max(0, min(self.top, len(rows) - body))
+        self.scr.erase()
+        for y in range(min(body, len(rows) - self.top)):
+            for x, part, attr in rows[self.top + y]:
+                if x < width:
+                    try:
+                        self.scr.addnstr(y, x, part, width - x, attr)
+                    except curses.error:
+                        pass  # writing the bottom-right cell
+        if self.message:
+            line, attr = self.message, curses.color_pair(1) | curses.A_BOLD
+        else:
+            line, attr = ("● modified · " if self.dirty else "") + self.footer(), curses.A_DIM
+        try:
+            self.scr.addnstr(height - 1, 0, line, width - 1, attr)
+        except curses.error:
+            pass
+        if cur and 0 <= cur[0] - self.top < body:
+            curses.curs_set(1)
+            self.scr.move(cur[0] - self.top, min(cur[1], width - 1))
+        else:
+            curses.curs_set(0)
+        self.scr.refresh()
+
+    # Keys
+
+    def run(self):
+        """Edit until saved (True) or cancelled (False)."""
+        while True:
+            self.draw()
+            try:
+                key = self.scr.get_wch()
+            except curses.error:
+                continue
+            if key == curses.KEY_RESIZE:
+                continue
+            self.message, self.follow = "", True
+            if key != "\x13":
+                self.overwrite = False
+            if key == curses.KEY_MOUSE:
+                self.mouse()
+            elif key == "\x13":  # ctrl-s
+                if self.save():
+                    return True
+            elif key == "\x1b" and self.sequence():
+                pass  # an escape sequence curses doesn't know (Alt+key, …): ignored
+            elif key in ("\x1b", "\x03"):  # esc, ctrl-c
+                if not self.dirty or self.confirm("Discard your changes? y/n"):
+                    return False
+            elif key == "\t":
+                self.go(self.focus + 1)
+            elif key == curses.KEY_BTAB:
+                self.go(self.focus - 1)
+            elif self.current.options is not None:
+                self.choose(key)
+            else:
+                self.type(key)
+
+    def sequence(self):
+        """After an Esc: whether more input follows at once (then drop it)."""
+        self.scr.nodelay(True)
+        rest = False
+        try:
+            while True:
+                self.scr.get_wch()
+                rest = True
+        except curses.error:
+            pass
+        finally:
+            self.scr.nodelay(False)
+        return rest
+
+    def go(self, index, pos=None):
+        self.focus = index % len(self.fields)
+        if pos is not None and self.current.options is None:
+            self.current.pos = len(self.current.value) if pos == "end" else pos
+
+    def vertical(self, step):
+        """Up or Down: the next visual line, else the next field on another row
+        (status and priority share one)."""
+        f = self.current
+        if f.options is None:
+            i = locate(f.pos, f.spots)
+            j = i + step
+            if 0 <= j < len(f.spots):
+                col = f.pos - f.spots[i][2]
+                _, _, start, end = f.spots[j]
+                wrapped = j + 1 < len(f.spots) and f.spots[j + 1][2] == end
+                f.pos = min(start + col, end - 1 if wrapped and end > start else end)
+                return
+        rows = {spot[0] for spot in f.spots}
+        index = self.focus + step
+        while 0 <= index < len(self.fields) and rows & {spot[0] for spot in self.fields[index].spots}:
+            index += step
+        if 0 <= index < len(self.fields):
+            self.go(index, 0 if step > 0 else "end")
+
+    def choose(self, key):
+        f = self.current
+        i = f.options.index(f.value)
+        if key in (curses.KEY_RIGHT, " "):
+            f.value = f.options[(i + 1) % len(f.options)]
+        elif key == curses.KEY_LEFT:
+            f.value = f.options[(i - 1) % len(f.options)]
+        elif key in (curses.KEY_UP, curses.KEY_DOWN):
+            self.vertical(-1 if key == curses.KEY_UP else 1)
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            self.go(self.focus + 1)
+        elif isinstance(key, str) and f.name == "priority" and key in "01234":
+            f.value = int(key)
+        elif isinstance(key, str) and f.name == "status":
+            f.value = next((o for o in f.options if o.startswith(key.lower())), f.value)
+
+    def type(self, key):
+        f = self.current
+        v, p = f.value, f.pos
+        name = curses.keyname(key) if isinstance(key, int) else b""
+        if key in ("\n", "\r", curses.KEY_ENTER):
+            if f.multiline:
+                v, p = v[:p] + "\n" + v[p:], p + 1
+            else:
+                self.go(self.focus + 1)
+                return
+        elif key in (curses.KEY_BACKSPACE, "\x7f", "\x08"):
+            if p:
+                v, p = v[:p - 1] + v[p:], p - 1
+        elif key in (curses.KEY_DC, "\x04"):
+            v = v[:p] + v[p + 1:]
+        elif key == curses.KEY_LEFT:
+            p = max(p - 1, 0)
+        elif key == curses.KEY_RIGHT:
+            p = min(p + 1, len(v))
+        elif name in (b"kLFT3", b"kLFT5", b"kRIT3", b"kRIT5"):  # alt/ctrl-arrows: by word
+            if name.startswith(b"kLFT"):
+                while p and not v[p - 1].isalnum():
+                    p -= 1
+                while p and v[p - 1].isalnum():
+                    p -= 1
+            else:
+                while p < len(v) and not v[p].isalnum():
+                    p += 1
+                while p < len(v) and v[p].isalnum():
+                    p += 1
+        elif key in (curses.KEY_UP, curses.KEY_DOWN):
+            self.vertical(-1 if key == curses.KEY_UP else 1)
+            return
+        elif key in (curses.KEY_HOME, "\x01"):
+            p = v.rfind("\n", 0, p) + 1
+        elif key == curses.KEY_END:
+            end = v.find("\n", p)
+            p = len(v) if end < 0 else end
+        elif key == "\x0b":  # ctrl-k: to the end of the line
+            end = v.find("\n", p)
+            v = v[:p] + (v[end:] if end >= 0 else "")
+        elif key == "\x15":  # ctrl-u: to the start of the line
+            start = v.rfind("\n", 0, p) + 1
+            v, p = v[:start] + v[p:], start
+        elif key == "\x17":  # ctrl-w: the word before
+            q = p
+            while q and v[q - 1] in " \n":
+                q -= 1
+            while q and v[q - 1] not in " \n":
+                q -= 1
+            v, p = v[:q] + v[p:], q
+        elif key == "\x05":  # ctrl-e
+            self.external(f)
+            return
+        elif key == "\x0c" and f.name == "labels":  # ctrl-l
+            self.pick(f)
+            return
+        elif isinstance(key, str) and key.isprintable():
+            v, p = v[:p] + key + v[p:], p + len(key)
+        else:
+            return
+        f.value, f.pos = v, p
+
+    def mouse(self):
+        try:
+            _, mx, my, _, bstate = curses.getmouse()
+        except curses.error:
+            return
+        if bstate & curses.BUTTON4_PRESSED:  # the wheel scrolls; the cursor stays
+            self.top, self.follow = max(self.top - 3, 0), False
+        elif bstate & getattr(curses, "BUTTON5_PRESSED", 0x200000):
+            self.top, self.follow = self.top + 3, False
+        elif bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):  # ncurses may merge press and release
+            row = my + self.top
+            for index, f in enumerate(self.fields):
+                for i, (spot_row, x, start, end) in enumerate(f.spots):
+                    if spot_row != row:
+                        continue
+                    if f.options is not None:
+                        if x <= mx < x + end:
+                            if index == self.focus:  # a click on the focused choice changes it
+                                self.choose(curses.KEY_RIGHT)
+                            self.focus = index
+                            return
+                    elif mx >= x:
+                        wrapped = i + 1 < len(f.spots) and f.spots[i + 1][2] == end
+                        self.focus = index
+                        f.pos = min(start + mx - x, end - 1 if wrapped and end > start else end)
+                        return
+
+    def confirm(self, question):
+        height, width = self.scr.getmaxyx()
+        self.scr.move(height - 1, 0)
+        self.scr.clrtoeol()
+        self.scr.addnstr(height - 1, 0, question, width - 1, curses.color_pair(3) | curses.A_BOLD)
+        self.scr.refresh()
+        try:
+            return self.scr.get_wch() in ("y", "Y")
+        except curses.error:
+            return False
+
+    def suspended(self, run):
+        """Run `run` with the terminal handed back (an editor, fzf)."""
+        curses.def_prog_mode()
+        curses.endwin()
+        try:
+            return run()
+        finally:
+            curses.reset_prog_mode()
+            curses.mousemask(curses.ALL_MOUSE_EVENTS)
+            self.scr.clear()
+
+    def external(self, f):
+        """Ctrl-E: edit the field in $VISUAL / $EDITOR."""
+        import tempfile
+        editor = shlex.split(os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi")
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+            tmp.write(f.value + "\n")
+        try:
+            if self.suspended(lambda: subprocess.run([*editor, tmp.name])).returncode != 0:
+                return
+            with open(tmp.name, encoding="utf-8") as fh:
+                value = fh.read().rstrip("\n")
+        finally:
+            os.remove(tmp.name)
+        f.value = value if f.multiline else " ".join(value.split())
+        f.pos = min(f.pos, len(f.value))
+
+    def pick(self, f):
+        """Ctrl-L on the labels: the label picker, over the labels typed so far."""
+        picked = self.suspended(lambda: pick_labels(self.issue["id"], f.value.split(), self.state))
+        if picked is not None:
+            f.value = " ".join(picked)
+            f.pos = len(f.value)
+
+    def save(self):
+        """Write the changed fields with one `bd update`; False (and a message)
+        when bd refuses, so nothing typed is lost."""
+        import tempfile
+        changed = [f for f in self.fields if f.changed]
+        if self.by_name["title"].value.strip() == "":
+            self.message = "A bead needs a title."
+            return False
+        if not changed:
+            return True
+        self.message = "Saving…"
+        self.draw()
+        # The bead as it is now: bd would apply an update for a deleted ID to
+        # another bead (one whose ID starts with it), and someone (an agent,
+        # another view) may have changed a field edited here.
+        now = show_issue(self.issue["id"])
+        if now is None:
+            self.message = f"{self.issue['id']} no longer exists: nothing saved."
+            return False
+        readonly = config()["readonly_labels"]
+        theirs = {name: now.get(name) or "" for name, _ in TEXT_SECTIONS}
+        theirs.update(title=now.get("title") or "", status=now.get("status") or "",
+                      priority=now.get("priority", 2),
+                      labels=sorted(l for l in now.get("labels") or [] if not matches(l, readonly)))
+        mine = {f.name: sorted(f.original.split()) if f.name == "labels" else f.original for f in changed}
+        clash = [name for name in mine if theirs[name] != mine[name]]
+        if clash and not self.overwrite:
+            self.overwrite = True
+            self.message = f"Changed meanwhile: {', '.join(clash)}. Ctrl-S again overwrites, Esc cancels."
+            return False
+        args, files = ["update", self.issue["id"]], []
+
+        def from_file(flag, value):  # long text via a file: no argument limits, no quoting
+            if not value.strip():  # bd refuses an empty file; an empty value clears
+                args.append(flag.replace("-file", "").replace("--body", "--description") + "=")
+                return
+            with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+                tmp.write(value)
+            files.append(tmp.name)
+            args.extend([flag, tmp.name])
+
+        for f in changed:
+            if f.name == "title":
+                args.append("--title=" + f.value.strip())
+            elif f.name == "status":
+                args.append("--status=" + f.value)
+            elif f.name == "priority":
+                args.append(f"--priority={f.value}")
+            elif f.name == "labels":
+                old, new = set(f.original.split()), {l for l in f.value.split() if not matches(l, readonly)}
+                args += [a for l in sorted(new - old) for a in ("--add-label", l)]
+                args += [a for l in sorted(old - new) for a in ("--remove-label", l)]
+            elif f.name == "description":
+                from_file("--body-file", f.value)
+            elif f.name == "design":
+                from_file("--design-file", f.value)
+            elif f.name == "acceptance_criteria":
+                args.append("--acceptance=" + f.value)
+            elif f.name == "notes":
+                args.append("--notes=" + f.value)
+        try:
+            out = subprocess.run([BD, *args], cwd=ROOT, capture_output=True, text=True, timeout=30)
+        finally:
+            for path in files:
+                os.remove(path)
+        if out.returncode != 0:
+            self.message = "bd: " + ((out.stderr or out.stdout).strip().splitlines() or ["update failed"])[-1]
+            return False
+        forget_detail(self.issue["id"])
+        return True
+
+
+def edit(bead_id, state):
+    """The editor for one bead, full screen; saves with bd on Ctrl-S."""
+    global curses
+    import curses
+    issue = show_issue(bead_id)
+    if issue is None:
         return
-    cmd = ["update", bead_id]
-    for label in add:
-        cmd += ["--add-label", label]
-    for label in remove:
-        cmd += ["--remove-label", label]
-    subprocess.run([BD, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
-    forget_detail(bead_id)
+
+    def main(scr):
+        curses.raw()  # Ctrl-S and Ctrl-C reach the editor, not the terminal
+        if hasattr(curses, "set_escdelay"):
+            curses.set_escdelay(25)  # Esc cancels at once
+        curses.use_default_colors()
+        for color in range(1, 8):  # the terminal's palette, as the pane uses it
+            curses.init_pair(color, color, -1)
+        curses.mousemask(curses.ALL_MOUSE_EVENTS)
+        curses.mouseinterval(0)
+        scr.keypad(True)
+        return Editor(scr, issue, state).run()
+
+    curses.wrapper(main)
 
 
 def prefetch(state, budget):
@@ -609,12 +1189,13 @@ RUN = f"{PY} -S {SELF}"  # how fzf's bindings call this script (-S: skip site, f
 def view():
     # The header changes before the (asynchronous) reload; after it, fzf drops it.
     reload = f"transform-header({RUN} header)+reload({RUN} render)"
+    edit = f"execute({RUN} edit {{1}})+reload({RUN} render --fresh)"
     args = [
         FZF, "--ansi", "--layout=reverse", "--no-sort", "--track",
         "--delimiter=\t", "--with-nth=5..", "--id-nth=1", "--listen",
         "--no-separator", "--no-scrollbar", "--gutter= ", "--info=hidden", "--prompt=› ",
         "--footer-border=none", "--ellipsis=…",
-        "--footer=enter details · → focus · ← parent/up · tab fold · 1-9 levels · 0 unfold · ctrl-l labels · ctrl-a open/all · esc quit",
+        "--footer=enter details · → focus/edit · ← parent/up · tab fold · 1-9 levels · 0 unfold · ctrl-e edit · ctrl-l labels · ctrl-a open/all · esc quit",
         # The cached pane when there is one (instant), else bd (and cache it).
         f"--preview=cat {shlex.quote(DETAIL_DIR)}/{{1}}@{{2}}@$FZF_PREVIEW_COLUMNS 2>/dev/null || {RUN} show {{1}} {{2}}",
         "--preview-window=right,50%,wrap-word,border-left,noinfo,hidden",
@@ -622,19 +1203,25 @@ def view():
         f"--bind=start:execute-silent({RUN} watch >/dev/null 2>&1 &)+transform-header({RUN} header)",
         f"--bind=tab:execute-silent({RUN} toggle {{1}})+reload({RUN} render)",
         "--bind=enter:toggle-preview",
+        # After every reload (asynchronous): the pane for the row now there, as
+        # --track keeps a bead whose stamp (and so its pane) may have changed.
+        "--bind=load:refresh-preview",
         f"--bind=double-click:execute-silent({RUN} focus {{1}})+{reload}+first",
         f"--bind=backward-eof:execute-silent({RUN} up)+{reload}",
         f"--bind=ctrl-a:execute-silent({RUN} all)+{reload}",
-        f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render --fresh)+refresh-preview",
+        f"--bind=ctrl-l:execute({RUN} labels {{1}})+reload({RUN} render --fresh)",
+        f"--bind=ctrl-e:{edit}",
         "--bind=esc:abort",
     ]
-    # While the filter is empty, arrows walk the tree: Right focuses a bead with
-    # children ({4}) and shows a leaf's details; Left jumps to the parent row
+    # While the filter is empty, arrows walk the tree: Right edits the bead while
+    # its details show (fzf sets the preview size only then), else focuses a
+    # bead with children ({4}) or shows a leaf's details; Left jumps to the parent row
     # ({3}), and from a top row leaves the focus (--track keeps the cursor on
     # the bead just left, so the next Left goes on to its parent). With a
     # filter they move the cursor in it. Digits fold to a level, or are typed
     # (so `12` still finds `.12`). transform: form, as the actions have parentheses.
     args.append(f'--bind=right:transform:if [ -n {{q}} ]; then echo forward-char; '
+                f'elif [ -n "$FZF_PREVIEW_COLUMNS" ]; then echo "{edit}"; '
                 f'elif [ {{4}} = 1 ]; then echo "execute-silent({RUN} focus {{1}})+{reload}+first"; '
                 f'else echo show-preview; fi')
     args.append(f'--bind=left:transform:if [ -n {{q}} ]; then echo backward-char; '
@@ -693,6 +1280,8 @@ def main(argv):
         save(state)
     elif cmd == "labels" and rest:
         edit_labels(rest[0], state)
+    elif cmd == "edit" and rest and rest[0]:
+        edit(rest[0], state)
     elif cmd == "watch":
         watch()
     else:
