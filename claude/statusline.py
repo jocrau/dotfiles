@@ -27,16 +27,41 @@ BURN_FROM, BURN_HIGH = 150_000, 400_000  # tokens read per call: hint, then red
 BLUE, GREEN, YELLOW, RED, GRAY, RESET = "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[90m", "\033[0m"
 
 
+def freshest(mine, saved):
+    """Per window, the newer of this session's limits and the saved ones:
+    the later reset, else (same window) the higher share, since usage only
+    grows within a window. Each session only knows the limits from its own
+    last API call, so an idle one would otherwise show, and save, old numbers."""
+    merged = dict(saved or {})
+    for key, window in (mine or {}).items():
+        other = merged.get(key)
+        if not isinstance(window, dict) or not isinstance(other, dict):
+            merged[key] = window or other
+            continue
+        newer = (window.get("resets_at") or 0, window.get("used_percentage") or 0)
+        older = (other.get("resets_at") or 0, other.get("used_percentage") or 0)
+        merged[key] = window if newer >= older else other
+    return merged
+
+
 def save_usage(data):
-    """The rate limits, for herdr's tab bar; written atomically."""
+    """The rate limits merged with the saved ones (shown here and in herdr's
+    tab bar); written atomically. Returns the merged limits."""
+    try:
+        with open(USAGE, encoding="utf-8") as f:
+            saved = json.load(f).get("rate_limits")
+    except (OSError, ValueError, AttributeError):
+        saved = None
+    limits = freshest(data.get("rate_limits"), saved)
     try:
         os.makedirs(os.path.dirname(USAGE), exist_ok=True)
         tmp = f"{USAGE}.{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"seen_at": int(time.time()), "rate_limits": data.get("rate_limits")}, f)
+            json.dump({"seen_at": int(time.time()), "rate_limits": limits or None}, f)
         os.replace(tmp, USAGE)
     except OSError:
         pass
+    return limits
 
 
 def git_state(cwd):
@@ -76,7 +101,7 @@ def main():
         data = json.load(sys.stdin)
     except ValueError:
         data = {}
-    save_usage(data)
+    limits = save_usage(data)
     workspace = data.get("workspace") or {}
     cwd = workspace.get("current_dir") or data.get("cwd") or os.getcwd()
     parts = []
@@ -116,7 +141,7 @@ def main():
             text += f" {RED if read >= BURN_HIGH else YELLOW}↻{read / 1000:.0f}k/call{RESET}"
         parts.append(text)
 
-    limits, alerts, used_up, now = data.get("rate_limits") or {}, [], False, time.time()
+    alerts, used_up, now = [], False, time.time()
     for key, label in (("five_hour", "5h"), ("seven_day", "7d")):
         window = limits.get(key) or {}
         percent = window.get("used_percentage")
