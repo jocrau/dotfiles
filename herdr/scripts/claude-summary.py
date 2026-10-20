@@ -6,11 +6,6 @@ Writes the `summary` token of the session's herdr pane (`$summary` in the
 [ui.sidebar.agents] rows of ~/.config/herdr/config.toml), and starts
 herdr-spaces.py (the Spaces sidebar's `$action` line) when it isn't running.
 
-A session given a colour with /color writes it as `summary_<colour>`
-instead (`summary_purple`), which the rows style in that colour. The colour
-is the transcript's last `agent-color` entry; only new transcript bytes are
-read each time.
-
 Pane lookup follows the live process, not names or env vars (HERDR_* go
 stale when a pane moves, and background sessions inherit them from wherever
 they started): a background session is the pane running `claude attach <id>`,
@@ -30,8 +25,6 @@ SPACES_LOCK = os.path.expanduser("~/.local/state/herdr/herdr-spaces.lock")
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 MAX = 120
 CACHE = os.path.expanduser("~/.local/state/herdr/claude-summary-panes.json")
-COLOR_CACHE = os.path.expanduser("~/.local/state/herdr/claude-summary-colors.json")
-COLORS = ("red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan")
 MARKERS = (("needs input:", "? "), ("failed:", "✗ "), ("result:", "✓ "))
 
 
@@ -94,44 +87,6 @@ def ensure_spaces():
         return
     subprocess.Popen([SPACES], start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def session_color(transcript):
-    """The colour /color last gave this session, or "" (none, `default`).
-    Remembers how far each transcript was read and resumes from there."""
-    if not transcript:
-        return ""
-    try:
-        with open(COLOR_CACHE, encoding="utf-8") as f:
-            cache = json.load(f)
-    except (OSError, ValueError):
-        cache = {}
-    seen = cache.get(transcript) or {"offset": 0, "color": ""}
-    try:
-        with open(transcript, "rb") as f:
-            if os.fstat(f.fileno()).st_size < seen["offset"]:
-                seen = {"offset": 0, "color": ""}  # rewritten: start over
-            f.seek(seen["offset"])
-            for line in f:
-                if not line.endswith(b"\n"):
-                    break  # a line still being written: next time
-                seen["offset"] += len(line)
-                if b'"agent-color"' in line:
-                    try:
-                        seen["color"] = json.loads(line).get("agentColor") or ""
-                    except ValueError:
-                        pass
-    except OSError:
-        return ""
-    cache[transcript] = seen
-    try:
-        os.makedirs(os.path.dirname(COLOR_CACHE), exist_ok=True)
-        with open(COLOR_CACHE + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(cache, f)
-        os.replace(COLOR_CACHE + ".tmp", COLOR_CACHE)
-    except OSError:
-        pass
-    return seen["color"] if seen["color"] in COLORS else ""
 
 
 def load_json(args):
@@ -214,15 +169,9 @@ def main():
     pane, workspace = pane_for(event.get("session_id", ""))
     if not workspace:
         return
-    # One token per colour, the others cleared: herdr styles tokens by name.
-    color = session_color(event.get("transcript_path", ""))
-    name = f"summary_{color}" if color else "summary"
-    tokens = ["--token", f"{name}={clip(summary)}"] if summary.strip() else []
-    for other in ["summary"] + [f"summary_{c}" for c in COLORS]:
-        if other != name or not tokens:
-            tokens += ["--clear-token", other]
+    token = ["--token", "summary=" + clip(summary)] if summary.strip() else ["--clear-token", "summary"]
     run([HERDR, "pane", "report-metadata", pane, "--source", "claude-summary",
-         "--seq", str(int(time.time() * 1000)), *tokens])
+         "--seq", str(int(time.time() * 1000)), *token])
     ensure_spaces()
 
 
