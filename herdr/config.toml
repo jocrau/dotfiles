@@ -56,11 +56,20 @@ description = "Toggle live git view (Source Control that keeps refreshing)"
 
 # Agents sidebar: workspace and the conversation's title (Claude sets the
 # terminal title), then the session's own summary line (per pane, from
-# claude-summary.py); the agent family only when it isn't claude.
+# claude-summary.py), in the colour picked with /color (one token per
+# colour); the agent family only when it isn't claude.
 [ui.sidebar.agents]
 rows = [
   ["state_icon", "workspace", "terminal_title_stripped"],
   [{ token = "$summary", dim = true },
+   { token = "$summary_red", fg = "#e5534b" },
+   { token = "$summary_blue", fg = "#539bf5" },
+   { token = "$summary_green", fg = "#57ab5a" },
+   { token = "$summary_yellow", fg = "#c69026" },
+   { token = "$summary_purple", fg = "#b083f0" },
+   { token = "$summary_orange", fg = "#e0823d" },
+   { token = "$summary_pink", fg = "#e275ad" },
+   { token = "$summary_cyan", fg = "#39c5cf" },
    { token = "agent", dim = true, rules = [{ equals = "claude", hide = true }] }],
 ]
 
