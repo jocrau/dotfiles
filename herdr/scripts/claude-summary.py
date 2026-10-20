@@ -2,10 +2,11 @@
 """Claude Code hook: show a one-line session summary in herdr's sidebar.
 
 Wired to Stop, UserPromptSubmit and Notification in ~/.claude/settings.json.
-Writes the `summary` token of the session's herdr workspace, rendered by
-`$summary` in [ui.sidebar.spaces] rows of ~/.config/herdr/config.toml.
+Writes the `summary` token of the session's herdr workspace and pane,
+rendered by `$summary` in the [ui.sidebar.spaces] and [ui.sidebar.agents]
+rows of ~/.config/herdr/config.toml.
 
-Workspace lookup follows the live process, not names or env vars (HERDR_* go
+Pane lookup follows the live process, not names or env vars (HERDR_* go
 stale when a pane moves, and background sessions inherit them from wherever
 they started): a background session is the pane running `claude attach <id>`,
 an interactive one is the pane whose foreground process is the session's pid.
@@ -93,11 +94,19 @@ def pane_matches(pane_id, entry):
     return False
 
 
-def workspace_for(session_id):
+def pane_for(session_id):
+    """The session's (pane, workspace), or ("", "")."""
     agents = load_json([CLAUDE, "agents", "--json", "--all"]) or []
-    entry = next((a for a in agents if a.get("sessionId") == session_id), None)
-    if not entry:
-        return ""
+    # A resumed session (claude --continue) can be listed twice: a stale entry
+    # without a process, and the live one. Try each, the live ones first.
+    entries = sorted((a for a in agents if a.get("sessionId") == session_id),
+                     key=lambda a: not a.get("pid"))
+    if not entries:
+        return "", ""
+
+    def matches(pane_id):
+        return any(pane_matches(pane_id, entry) for entry in entries)
+
     panes = (load_json([HERDR, "pane", "list"]) or {}).get("result", {}).get("panes", [])
     where = {p["pane_id"]: p["workspace_id"] for p in panes}
     try:
@@ -106,10 +115,10 @@ def workspace_for(session_id):
     except (OSError, ValueError):
         cache = {}
     cached = cache.get(session_id)
-    if cached in where and pane_matches(cached, entry):
-        return where[cached]
+    if cached in where and matches(cached):
+        return cached, where[cached]
     for pane in panes:
-        if pane.get("agent") == "claude" and pane["pane_id"] != cached and pane_matches(pane["pane_id"], entry):
+        if pane.get("agent") == "claude" and pane["pane_id"] != cached and matches(pane["pane_id"]):
             cache[session_id] = pane["pane_id"]
             try:
                 os.makedirs(os.path.dirname(CACHE), exist_ok=True)
@@ -117,8 +126,8 @@ def workspace_for(session_id):
                     json.dump(cache, f)
             except OSError:
                 pass
-            return pane["workspace_id"]
-    return ""
+            return pane["pane_id"], pane["workspace_id"]
+    return "", ""
 
 
 def main():
@@ -139,13 +148,15 @@ def main():
         summary = "⚠ " + message
     else:
         return
-    workspace = workspace_for(event.get("session_id", ""))
+    pane, workspace = pane_for(event.get("session_id", ""))
     if not workspace:
         return
-    args = [HERDR, "workspace", "report-metadata", workspace, "--source", "claude-summary",
-            "--seq", str(int(time.time() * 1000))]
-    args += ["--token", "summary=" + clip(summary)] if summary.strip() else ["--clear-token", "summary"]
-    run(args)
+    token = ["--token", "summary=" + clip(summary)] if summary.strip() else ["--clear-token", "summary"]
+    seq = ["--seq", str(int(time.time() * 1000))]
+    # The workspace's for the Spaces sidebar, the pane's for the Agents one
+    # (several agents can share a workspace).
+    run([HERDR, "workspace", "report-metadata", workspace, "--source", "claude-summary", *seq, *token])
+    run([HERDR, "pane", "report-metadata", pane, "--source", "claude-summary", *seq, *token])
 
 
 if __name__ == "__main__":
