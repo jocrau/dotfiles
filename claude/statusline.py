@@ -1,12 +1,17 @@
 #!/usr/bin/python3 -I
 """Claude Code status line, one line:
 
-  mm-plugin-marketplace ⎇ org-sync  main* ↑2↓5  Opus 5.5·high ⚡  ▰▰▰▱▱ 58%  7d 100% on credits
+  mm-plugin-marketplace ⎇ org-sync  main* ↑2↓5  Opus 5.5·high ⚡  ▰▰▰▱▱ 58% ↻180k/call  7d 100% on credits
 
 repo (⎇ linked worktree), branch (* uncommitted, ↑ahead ↓behind), model
 with effort (⚡ fast mode), context used as a bar (yellow from 60%, red
-from 80%; 200k+ once a response passed 200k tokens), and subscription usage
-only when a window is at 80% or more (herdr's tab bar shows it always).
+from 80%), and subscription usage only when a window is at 80% or more
+(herdr's tab bar shows it always).
+
+The burn hint `↻180k/call` shows, from 150k, how many tokens the last API
+call read: every call (each tool step of a turn) re-reads the whole
+context, so a large one uses the 5-hour and weekly limits fast, even when
+the bar looks low on a 1M-token model. Time for /compact or a fresh session.
 
 Also saves the rate limits for herdr's tab bar
 (~/.config/herdr/scripts/claude-usage.py). Called by statusline-command.sh.
@@ -18,6 +23,7 @@ import sys
 import time
 
 USAGE = os.path.expanduser("~/.local/state/claude-usage.json")
+BURN_FROM, BURN_HIGH = 150_000, 400_000  # tokens read per call: hint, then red
 BLUE, GREEN, YELLOW, RED, GRAY, RESET = "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[90m", "\033[0m"
 
 
@@ -100,12 +106,14 @@ def main():
             text += f" {YELLOW}⚡{RESET}"
         parts.append(text)
 
-    used = (data.get("context_window") or {}).get("used_percentage")
+    context = data.get("context_window") or {}
+    used = context.get("used_percentage")
     if used is not None:
         color = RED if used >= 80 else YELLOW if used >= 60 else GRAY
         text = f"{color}{bar(used)} {used:.0f}%{RESET}"
-        if data.get("exceeds_200k_tokens"):
-            text += f" {YELLOW}200k+{RESET}"
+        read = context.get("total_input_tokens") or 0
+        if read >= BURN_FROM:
+            text += f" {RED if read >= BURN_HIGH else YELLOW}↻{read / 1000:.0f}k/call{RESET}"
         parts.append(text)
 
     limits, alerts, used_up, now = data.get("rate_limits") or {}, [], False, time.time()
