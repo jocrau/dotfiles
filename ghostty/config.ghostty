@@ -32,6 +32,9 @@ keybind = super+arrow_left=unbind
 keybind = super+arrow_right=unbind
 keybind = super+arrow_up=unbind
 keybind = super+arrow_down=unbind
+# Cmd+Shift+Up/Down move between agents in herdr (Ghostty: jump to prompt)
+keybind = super+shift+arrow_up=unbind
+keybind = super+shift+arrow_down=unbind
 keybind = super+digit_1=unbind
 keybind = super+digit_2=unbind
 keybind = super+digit_3=unbind
