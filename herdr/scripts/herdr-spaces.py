@@ -5,7 +5,6 @@
   #380 CI ✗        your PR for the space's branch needs you: feedback,
                    CI failing or conflicts, ready to merge (from pr-flow's
                    local queue; no network)
-  ±3 uncommitted   uncommitted changes while no agent in the space works
 
 Runs in the background, one per user: started by claude-summary.py (the
 Claude hook) when it isn't running, it polls herdr every few seconds and
@@ -31,7 +30,7 @@ LOCK = os.path.join(STATE, "herdr-spaces.lock")
 LOG = os.path.join(STATE, "herdr-spaces.log")
 PR_FLOW_SETTINGS = os.path.expanduser("~/.claude/pr-flow/settings.json")
 POLL = 3          # seconds between looks at herdr (agent states)
-REPO_EVERY = 20   # seconds between git and pr-flow reads per space
+REPO_EVERY = 20   # seconds between branch and pr-flow reads per space
 PR_SHORT = {"CI failing": "CI ✗", "merge conflicts": "conflicts"}
 FAILURES_BEFORE_WARNING = 3
 warned = set()
@@ -119,11 +118,9 @@ def my_prs():
     return prs
 
 
-def repo_state(path):
-    """(branch, uncommitted file count) of the checkout at `path`."""
-    branch = (run(["git", "-C", path, "branch", "--show-current"]) or "").strip()
-    status = run(["git", "-C", path, "status", "--porcelain"]) or ""
-    return branch, len(status.splitlines())
+def branch_of(path):
+    """The branch checked out at `path`."""
+    return (run(["git", "-C", path, "branch", "--show-current"]) or "").strip()
 
 
 def report(workspace, line):
@@ -133,7 +130,7 @@ def report(workspace, line):
 
 
 def tick(memo):
-    """One round: look at herdr (and every REPO_EVERY s at git and pr-flow),
+    """One round: look at herdr (and every REPO_EVERY s at branches and pr-flow),
     write the lines that changed. False when herdr didn't answer."""
     snap = snapshot()
     if snap is None:
@@ -158,13 +155,10 @@ def tick(memo):
         path = tree.get("checkout_path")
         if path:
             if slow or path not in memo["repos"]:
-                memo["repos"][path] = repo_state(path)
-            branch, dirty = memo["repos"][path]
-            pr = memo["prs"].get((tree.get("repo_name"), branch))
+                memo["repos"][path] = branch_of(path)
+            pr = memo["prs"].get((tree.get("repo_name"), memo["repos"][path]))
             if pr:
                 parts.append(pr)
-            if dirty and not any(p.get("agent_status") == "working" for p in mine):
-                parts.append(f"±{dirty} uncommitted")
         line = " · ".join(parts)
         if memo["shown"].get(wid) != line:
             report(wid, line)

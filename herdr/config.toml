@@ -62,8 +62,7 @@ rows = [
 
 # Spaces sidebar: name; branch (unless main/master) with ahead/behind; then,
 # only when the space needs you, what for: agents waiting, your PR's
-# feedback/CI/conflicts/merge, uncommitted changes nobody is working on
-# (~/.config/herdr/scripts/herdr-spaces.py).
+# feedback/CI/conflicts/merge (~/.config/herdr/scripts/herdr-spaces.py).
 [ui.sidebar.spaces]
 rows = [
   ["state_icon", "workspace"],
