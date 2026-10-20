@@ -1,10 +1,13 @@
 #!/usr/bin/python3 -I
-"""Claude Code hook: show a one-line session summary in herdr's sidebar.
+"""Claude Code hook: session and repo status in herdr's sidebar.
 
 Wired to Stop, UserPromptSubmit and Notification in ~/.claude/settings.json.
-Writes the `summary` token of the session's herdr workspace and pane,
-rendered by `$summary` in the [ui.sidebar.spaces] and [ui.sidebar.agents]
-rows of ~/.config/herdr/config.toml.
+Writes the `summary` token of the session's herdr pane (`$summary` in the
+[ui.sidebar.agents] rows of ~/.config/herdr/config.toml). After each reply
+(Stop) it also writes the `changes` (uncommitted files) and `beads` (in
+progress, ready) tokens of the session's workspace, for its repo
+(`$changes`, `$beads` in [ui.sidebar.spaces]), from a detached child, so
+Claude doesn't wait for git and bd.
 
 Pane lookup follows the live process, not names or env vars (HERDR_* go
 stale when a pane moves, and background sessions inherit them from wherever
@@ -20,15 +23,16 @@ import sys
 import time
 
 HERDR = "/opt/homebrew/bin/herdr"
+BD = "/opt/homebrew/bin/bd"
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 MAX = 120
 CACHE = os.path.expanduser("~/.local/state/herdr/claude-summary-panes.json")
 MARKERS = (("needs input:", "? "), ("failed:", "✗ "), ("result:", "✓ "))
 
 
-def run(args):
+def run(args, cwd=None):
     try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=5)
+        out = subprocess.run(args, capture_output=True, text=True, timeout=5, cwd=cwd)
         return out.stdout if out.returncode == 0 else ""
     except Exception:
         return ""
@@ -71,6 +75,58 @@ def summarize_stop(event):
                 return icon + line[len(marker):].strip()
     first = next((l for l in lines if not l.startswith(("```", "|", "#"))), "")
     return re.sub(r"[*`]", "", first)
+
+
+def beads_root(path):
+    """The nearest folder with a .beads directory, or ""."""
+    while path and path != os.path.dirname(path):
+        if os.path.isdir(os.path.join(path, ".beads")):
+            return path
+        path = os.path.dirname(path)
+    return ""
+
+
+def repo_stats(cwd):
+    """The `changes` (`±4 ?2`: changed, untracked) and `beads` (`◐2 · 5
+    ready`) tokens for the repo at `cwd`; "" for a part with nothing."""
+    changes = ""
+    status = run(["git", "-C", cwd, "status", "--porcelain"])
+    if status:
+        lines = status.splitlines()
+        untracked = sum(line.startswith("??") for line in lines)
+        changes = " ".join(([f"±{len(lines) - untracked}"] if len(lines) > untracked else [])
+                           + ([f"?{untracked}"] if untracked else []))
+    beads, root = "", beads_root(cwd)
+    if root:
+        bd = [BD, "--readonly", "--sandbox"]
+        active = run([*bd, "count", "--status", "in_progress"], cwd=root).strip()
+        try:
+            ready = len(json.loads(run([*bd, "ready", "--json", "--limit", "0"], cwd=root) or "[]"))
+        except ValueError:
+            ready = 0
+        beads = " · ".join(([f"◐{active}"] if active.isdigit() and int(active) else [])
+                           + ([f"{ready} ready"] if ready else []))
+    return changes, beads
+
+
+def report_repo(workspace, cwd):
+    """Repo stats as workspace tokens, from a detached child: the hook (and
+    Claude) returns at once, and the child's output goes nowhere."""
+    if os.fork():
+        return
+    try:
+        os.setsid()
+        null = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+        changes, beads = repo_stats(cwd)
+        args = [HERDR, "workspace", "report-metadata", workspace, "--source", "claude-repo",
+                "--seq", str(int(time.time() * 1000))]
+        for name, value in (("changes", changes), ("beads", beads)):
+            args += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
+        run(args)
+    finally:
+        os._exit(0)
 
 
 def load_json(args):
@@ -152,11 +208,10 @@ def main():
     if not workspace:
         return
     token = ["--token", "summary=" + clip(summary)] if summary.strip() else ["--clear-token", "summary"]
-    seq = ["--seq", str(int(time.time() * 1000))]
-    # The workspace's for the Spaces sidebar, the pane's for the Agents one
-    # (several agents can share a workspace).
-    run([HERDR, "workspace", "report-metadata", workspace, "--source", "claude-summary", *seq, *token])
-    run([HERDR, "pane", "report-metadata", pane, "--source", "claude-summary", *seq, *token])
+    run([HERDR, "pane", "report-metadata", pane, "--source", "claude-summary",
+         "--seq", str(int(time.time() * 1000)), *token])
+    if kind == "Stop" and event.get("cwd"):  # a reply: files and beads may have changed
+        report_repo(workspace, event["cwd"])
 
 
 if __name__ == "__main__":
