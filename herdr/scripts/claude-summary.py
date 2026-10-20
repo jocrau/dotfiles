@@ -1,13 +1,10 @@
 #!/usr/bin/python3 -I
-"""Claude Code hook: session and repo status in herdr's sidebar.
+"""Claude Code hook: a one-line session summary in herdr's Agents sidebar.
 
 Wired to Stop, UserPromptSubmit and Notification in ~/.claude/settings.json.
 Writes the `summary` token of the session's herdr pane (`$summary` in the
-[ui.sidebar.agents] rows of ~/.config/herdr/config.toml). After each reply
-(Stop) it also writes the `changes` (uncommitted files) and `beads` (in
-progress, ready) tokens of the session's workspace, for its repo
-(`$changes`, `$beads` in [ui.sidebar.spaces]), from a detached child, so
-Claude doesn't wait for git and bd.
+[ui.sidebar.agents] rows of ~/.config/herdr/config.toml), and starts
+herdr-spaces.py (the Spaces sidebar's `$action` line) when it isn't running.
 
 Pane lookup follows the live process, not names or env vars (HERDR_* go
 stale when a pane moves, and background sessions inherit them from wherever
@@ -23,7 +20,8 @@ import sys
 import time
 
 HERDR = "/opt/homebrew/bin/herdr"
-BD = "/opt/homebrew/bin/bd"
+SPACES = os.path.join(os.path.dirname(os.path.realpath(__file__)), "herdr-spaces.py")
+SPACES_LOCK = os.path.expanduser("~/.local/state/herdr/herdr-spaces.lock")
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 MAX = 120
 CACHE = os.path.expanduser("~/.local/state/herdr/claude-summary-panes.json")
@@ -77,56 +75,18 @@ def summarize_stop(event):
     return re.sub(r"[*`]", "", first)
 
 
-def beads_root(path):
-    """The nearest folder with a .beads directory, or ""."""
-    while path and path != os.path.dirname(path):
-        if os.path.isdir(os.path.join(path, ".beads")):
-            return path
-        path = os.path.dirname(path)
-    return ""
-
-
-def repo_stats(cwd):
-    """The `changes` (`±4 ?2`: changed, untracked) and `beads` (`◐2 · 5
-    ready`) tokens for the repo at `cwd`; "" for a part with nothing."""
-    changes = ""
-    status = run(["git", "-C", cwd, "status", "--porcelain"])
-    if status:
-        lines = status.splitlines()
-        untracked = sum(line.startswith("??") for line in lines)
-        changes = " ".join(([f"±{len(lines) - untracked}"] if len(lines) > untracked else [])
-                           + ([f"?{untracked}"] if untracked else []))
-    beads, root = "", beads_root(cwd)
-    if root:
-        bd = [BD, "--readonly", "--sandbox"]
-        active = run([*bd, "count", "--status", "in_progress"], cwd=root).strip()
-        try:
-            ready = len(json.loads(run([*bd, "ready", "--json", "--limit", "0"], cwd=root) or "[]"))
-        except ValueError:
-            ready = 0
-        beads = " · ".join(([f"◐{active}"] if active.isdigit() and int(active) else [])
-                           + ([f"{ready} ready"] if ready else []))
-    return changes, beads
-
-
-def report_repo(workspace, cwd):
-    """Repo stats as workspace tokens, from a detached child: the hook (and
-    Claude) returns at once, and the child's output goes nowhere."""
-    if os.fork():
-        return
+def ensure_spaces():
+    """Start herdr-spaces.py, detached, unless it holds its lock already."""
+    import fcntl
     try:
-        os.setsid()
-        null = os.open(os.devnull, os.O_RDWR)
-        for fd in (0, 1, 2):
-            os.dup2(null, fd)
-        changes, beads = repo_stats(cwd)
-        args = [HERDR, "workspace", "report-metadata", workspace, "--source", "claude-repo",
-                "--seq", str(int(time.time() * 1000))]
-        for name, value in (("changes", changes), ("beads", beads)):
-            args += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
-        run(args)
-    finally:
-        os._exit(0)
+        os.makedirs(os.path.dirname(SPACES_LOCK), exist_ok=True)
+        with open(SPACES_LOCK, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # raises while it runs
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    except OSError:
+        return
+    subprocess.Popen([SPACES], start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def load_json(args):
@@ -210,8 +170,7 @@ def main():
     token = ["--token", "summary=" + clip(summary)] if summary.strip() else ["--clear-token", "summary"]
     run([HERDR, "pane", "report-metadata", pane, "--source", "claude-summary",
          "--seq", str(int(time.time() * 1000)), *token])
-    if kind == "Stop" and event.get("cwd"):  # a reply: files and beads may have changed
-        report_repo(workspace, event["cwd"])
+    ensure_spaces()
 
 
 if __name__ == "__main__":
