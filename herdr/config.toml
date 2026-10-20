@@ -4,8 +4,12 @@ onboarding = false
 status_indicators = "dots"
 # Open new tabs immediately with a generated name; rename later (prefix+shift+t)
 prompt_new_tab_name = false
-# Room for the Claude session summary line ($summary) in the Spaces sidebar
+# Room for the Claude session summary line ($summary) in the Agents sidebar
 sidebar_max_width = 48
+# Claude subscription usage, right of the tabs: 5-hour and 7-day windows
+tab_bar_right = [
+  { type = "command", command = "~/.config/herdr/scripts/claude-usage.py", interval_seconds = 15, timeout_seconds = 2 },
+]
 
 [ui.sound]
 # No sounds when agents change state in background workspaces

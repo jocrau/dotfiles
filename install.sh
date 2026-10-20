@@ -29,6 +29,7 @@ for script in "$REPO"/herdr/scripts/*; do
 done
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
+link claude/statusline-command.sh "$HOME/.claude/statusline-command.sh"
 
 # The repo is public: scan staged changes for secrets before every commit.
 git -C "$REPO" config core.hooksPath git-hooks
