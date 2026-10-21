@@ -322,7 +322,10 @@ def render(state, fresh=False):
         else:
             marker = "  "
         parent, short = shorts[i]
-        line = line.replace(sym, f"{DIM}{marker}{RESET}{sym}", 1)
+        # The marker goes before bd's colour code for the symbol, so its
+        # reset doesn't strip the status colour.
+        line = re.sub(rf"((?:\x1b\[[0-9;]*m)*){sym}", lambda m: f"{DIM}{marker}{RESET}{m.group(1)}{sym}",
+                      line, count=1)
         line = line.replace(bead_id, short.ljust(column.get(depth, 0) - depth * 4 - 4), 1)
         tags = [f"#{l}" for l in labels.get(bead_id, [])
                 if l not in shared and matches(l, cfg["row_labels"])]
