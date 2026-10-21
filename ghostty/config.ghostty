@@ -4,7 +4,7 @@ font-family = MesloLGS NF
 font-size = 12
 
 # First window attaches to the persistent herdr session; new windows/tabs get a plain shell
-initial-command = /opt/homebrew/bin/herdr
+initial-command = shell:exec ~/.local/bin/herdr
 
 # Quick terminal: a drop-down scratch shell (outside herdr) over any app.
 # The global shortcut needs Accessibility permission for Ghostty (asked once).

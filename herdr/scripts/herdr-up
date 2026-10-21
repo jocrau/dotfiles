@@ -1,0 +1,24 @@
+#!/bin/sh
+# Update herdr and what has to match its version: the binary (herdr's own
+# updater, with live handoff so running panes and agents survive), the agent
+# skill Claude Code loads, and the agent hooks that are already installed.
+# Safe to re-run: without a new release only the skill and hooks are rewritten.
+set -eu
+HERDR="$HOME/.local/bin/herdr"  # herdr's own installer (herdr update), not Homebrew
+SKILL="$HOME/.claude/skills/herdr/SKILL.md"
+
+"$HERDR" update --handoff
+"$HERDR" --version
+
+# The skill bundled with the binary, so it describes this release's CLI.
+mkdir -p "$(dirname "$SKILL")"
+"$HERDR" --skill > "$SKILL.tmp" && mv "$SKILL.tmp" "$SKILL"
+echo "skill   $SKILL"
+
+# Re-install the hooks of agents that have them (current or outdated);
+# agents never set up stay that way.
+"$HERDR" integration status | awk -F': ' '$2 !~ /^not installed/ { sub(/ .*/, "", $1); print $1 }' |
+  while read -r agent; do
+    "$HERDR" integration install "$agent" | sed 's/^/        /'
+  done
+"$HERDR" integration status | grep -v ': not installed' || true

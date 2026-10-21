@@ -3,7 +3,7 @@
 # detail pane and live refresh) for the focused pane's repo: splits the focused
 # pane and zooms the new pane. Quitting the view closes the pane too.
 # Only panes opened by this script are tracked/closed.
-HERDR=/opt/homebrew/bin/herdr
+HERDR="$HOME/.local/bin/herdr"  # herdr's own installer (herdr update), not Homebrew
 JQ=/opt/homebrew/bin/jq
 VIEW="$HOME/.config/herdr/scripts/beads-view"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/beads-tree-panes"

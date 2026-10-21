@@ -24,7 +24,7 @@ import subprocess
 import time
 import traceback
 
-HERDR = "/opt/homebrew/bin/herdr"
+HERDR = os.path.expanduser("~/.local/bin/herdr")  # herdr's own installer (herdr update), not Homebrew
 STATE = os.path.expanduser("~/.local/state/herdr")
 LOCK = os.path.join(STATE, "herdr-spaces.lock")
 LOG = os.path.join(STATE, "herdr-spaces.log")

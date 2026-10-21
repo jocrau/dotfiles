@@ -2,7 +2,7 @@
 # Toggle a live git view in the focused herdr tab: a herdr-sidebar Source Control
 # pane launched with HERDR_SIDEBAR_BACKGROUND_REFRESH=1, so it keeps polling git
 # status while unfocused. Only panes opened by this script are tracked/closed.
-HERDR=/opt/homebrew/bin/herdr
+HERDR="$HOME/.local/bin/herdr"  # herdr's own installer (herdr update), not Homebrew
 JQ=/opt/homebrew/bin/jq
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/live-git-panes"
 mkdir -p "$(dirname "$STATE")" && touch "$STATE"

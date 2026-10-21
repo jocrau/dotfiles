@@ -19,7 +19,7 @@ import os
 import subprocess
 import time
 
-HERDR = "/opt/homebrew/bin/herdr"
+HERDR = os.path.expanduser("~/.local/bin/herdr")  # herdr's own installer (herdr update), not Homebrew
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 
 

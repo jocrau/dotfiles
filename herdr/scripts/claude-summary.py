@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-HERDR = "/opt/homebrew/bin/herdr"
+HERDR = os.path.expanduser("~/.local/bin/herdr")  # herdr's own installer (herdr update), not Homebrew
 SPACES = os.path.join(os.path.dirname(os.path.realpath(__file__)), "herdr-spaces.py")
 SPACES_LOCK = os.path.expanduser("~/.local/state/herdr/herdr-spaces.lock")
 CLAUDE = os.path.expanduser("~/.local/bin/claude")

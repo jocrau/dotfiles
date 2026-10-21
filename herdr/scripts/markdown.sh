@@ -2,7 +2,7 @@
 # Toggle a full-tab Markdown reader for the focused pane's repo: splits the
 # focused pane, zooms it, and runs md-pick.sh (fzf picker with rendered
 # preview, glow pager). Only panes opened by this script are tracked/closed.
-HERDR=/opt/homebrew/bin/herdr
+HERDR="$HOME/.local/bin/herdr"  # herdr's own installer (herdr update), not Homebrew
 JQ=/opt/homebrew/bin/jq
 PICK="$HOME/.config/herdr/scripts/md-pick.sh"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/markdown-panes"
