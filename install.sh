@@ -42,6 +42,7 @@ cat <<EOF
 Not linked (do once by hand on a new machine):
   - herdr:              curl -fsSL https://herdr.dev/install.sh | sh  (not Homebrew: herdr update and live handoff need it); later updates: herdr-up
   - herdr plugins:      while read p; do herdr plugin install --yes "\$p"; done < "$REPO/herdr/plugins.txt"
+  - herdr link plugin:  herdr plugin link "$REPO/herdr/plugins/open-in-editor"  (Ctrl-click file links -> VS Code)
   - herdr-sidebar:      press s in the sidebar, turn Auto-open off and dock left
   - Claude Code hooks:  merge claude/herdr-summary-hooks.json into ~/.claude/settings.json
   - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo

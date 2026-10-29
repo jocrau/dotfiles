@@ -1,0 +1,18 @@
+id = "open-in-editor"
+name = "Open in editor"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Ctrl-click a file link (OSC 8: file:// or a bare absolute path, e.g. one Claude Code prints) to open it in VS Code at its line"
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "open"
+title = "Open file link in editor"
+description = "Opens the clicked file:// link with `code -g path:line`"
+command = ["/usr/bin/python3", "-I", "open.py"]
+
+[[link_handlers]]
+id = "file"
+title = "Open in VS Code"
+pattern = "^(file://|/)"  # file:// links, and the bare absolute paths some apps put in OSC 8 links
+action = "open"
