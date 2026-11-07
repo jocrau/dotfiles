@@ -1,0 +1,12 @@
+{
+  "zoom": 0.9,
+  "sounds": {
+    "enabled": false
+  },
+  "font_size": 14.0,
+  "font_ligatures": false,
+  "ui_font": "JetBrains Mono",
+  "telemetry": false,
+  "minimum_contrast": 1.0,
+  "theme": "solarized"
+}

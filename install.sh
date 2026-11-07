@@ -28,6 +28,17 @@ for script in "$REPO"/herdr/scripts/*; do
   name=$(basename "$script")
   link "herdr/scripts/$name" "$HOME/.config/herdr/scripts/$name"
 done
+# herdr-app: only the files that are mine; the app writes the rest of
+# ~/.config/herdr-app itself (AGENTS.md, *.d.ts, view.json, shared.json, ...).
+for f in keys.json settings.json layouts/my-main.json; do
+  link "herdr-app/$f" "$HOME/.config/herdr-app/$f"
+done
+for mod in "$REPO"/herdr-app/mods/*/; do
+  name=$(basename "$mod")
+  for f in "$mod"*; do
+    link "herdr-app/mods/$name/$(basename "$f")" "$HOME/.config/herdr-app/mods/$name/$(basename "$f")"
+  done
+done
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
 link claude/statusline-command.sh "$HOME/.claude/statusline-command.sh"
@@ -40,6 +51,7 @@ echo "hooks   core.hooksPath -> git-hooks (gitleaks pre-commit)"
 cat <<EOF
 
 Not linked (do once by hand on a new machine):
+  - herdr-app:          curl -fsSL https://releases.herdr.dev/app/install.sh | sh  (also installs herdr-core, hc)
   - herdr:              curl -fsSL https://herdr.dev/install.sh | sh  (not Homebrew: herdr update and live handoff need it); later updates: herdr-up
   - herdr plugins:      while read p; do herdr plugin install --yes "\$p"; done < "$REPO/herdr/plugins.txt"
   - herdr link plugin:  herdr plugin link "$REPO/herdr/plugins/open-in-editor"  (Ctrl-click file links -> VS Code)
