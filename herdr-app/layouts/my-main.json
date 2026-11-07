@@ -40,7 +40,7 @@
               "id": "agents",
               "type": "block",
               "content": {
-                "mod": "my-agents"
+                "mod": "agents"
               },
               "size": {
                 "weight": 1

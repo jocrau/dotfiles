@@ -11,7 +11,7 @@ Bound to cmd+shift+a in ~/.config/herdr/config.toml. Two jobs:
   the same tab; the session itself keeps running throughout.
 
 A session counts as open when some pane's foreground process is
-`claude attach <id>` (same match as claude-summary.py). A herdr notification
+`claude attach <id>`. A herdr notification
 reports what was done.
 """
 import json

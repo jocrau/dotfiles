@@ -64,7 +64,6 @@ Not linked (do once by hand on a new machine):
   - herdr plugins:      while read p; do herdr plugin install --yes "\$p"; done < "$REPO/herdr/plugins.txt"
   - herdr link plugin:  herdr plugin link "$REPO/herdr/plugins/open-in-editor"  (Ctrl-click file links -> VS Code)
   - herdr-sidebar:      press s in the sidebar, turn Auto-open off and dock left
-  - Claude Code hooks:  merge claude/herdr-summary-hooks.json into ~/.claude/settings.json
   - agent-browser:      npm install -g agent-browser  (bin/agent-browser wraps it: one visible Chrome and login profile per repo)
   - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo
   - Commit identity:    git -C "$REPO" config user.email <id>+<login>@users.noreply.github.com
