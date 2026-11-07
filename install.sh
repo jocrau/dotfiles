@@ -35,6 +35,12 @@ for f in keys.json settings.json layouts/my-main.json; do
 done
 for mod in "$REPO"/herdr-app/mods/*/; do
   name=$(basename "$mod")
+  # A mod that imports its own modules is linked as a whole folder: herdr-app
+  # refuses an import whose real path is outside the mod's folder.
+  if ls "$mod"*.js | grep -qv '/main\.js$'; then
+    link "herdr-app/mods/$name" "$HOME/.config/herdr-app/mods/$name"
+    continue
+  fi
   for f in "$mod"*; do
     link "herdr-app/mods/$name/$(basename "$f")" "$HOME/.config/herdr-app/mods/$name/$(basename "$f")"
   done
@@ -42,7 +48,9 @@ done
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
 link claude/statusline-command.sh "$HOME/.claude/statusline-command.sh"
+link claude/skills/app-browser/SKILL.md "$HOME/.claude/skills/app-browser/SKILL.md"
 link herdr/scripts/herdr-up "$HOME/.local/bin/herdr-up"
+link bin/agent-browser "$HOME/bin/agent-browser"
 
 # The repo is public: scan staged changes for secrets before every commit.
 git -C "$REPO" config core.hooksPath git-hooks
@@ -57,6 +65,7 @@ Not linked (do once by hand on a new machine):
   - herdr link plugin:  herdr plugin link "$REPO/herdr/plugins/open-in-editor"  (Ctrl-click file links -> VS Code)
   - herdr-sidebar:      press s in the sidebar, turn Auto-open off and dock left
   - Claude Code hooks:  merge claude/herdr-summary-hooks.json into ~/.claude/settings.json
+  - agent-browser:      npm install -g agent-browser  (bin/agent-browser wraps it: one visible Chrome and login profile per repo)
   - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo
   - Commit identity:    git -C "$REPO" config user.email <id>+<login>@users.noreply.github.com
   - Reload:             herdr server reload-config; kill -USR2 \$(pgrep -x ghostty)

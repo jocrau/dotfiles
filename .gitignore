@@ -1,1 +1,4 @@
 __pycache__/
+# Written by herdr-app into each mod folder
+herdr-app/mods/*/gpui-kit.d.ts
+herdr-app/mods/*/jsconfig.json

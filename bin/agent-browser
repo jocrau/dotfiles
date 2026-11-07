@@ -1,0 +1,17 @@
+#!/bin/sh
+# agent-browser with per-repo defaults, so no repo needs its own config:
+# one visible Chrome per git repo (session = repo folder name), each with its
+# own persistent profile so a login sticks. Anything already set wins.
+REAL="$HOME/.nvm/versions/node/v24.2.0/bin/agent-browser"
+
+if [ -z "$AGENT_BROWSER_SESSION" ]; then
+  top=$(git rev-parse --show-toplevel 2>/dev/null)
+  name=$(basename "${top:-default}" | tr -c 'A-Za-z0-9_\n-' '-')
+  export AGENT_BROWSER_SESSION="$name"
+fi
+: "${AGENT_BROWSER_PROFILE:=$HOME/.agent-browser/profiles/$AGENT_BROWSER_SESSION}"
+: "${AGENT_BROWSER_HEADED:=1}"
+export AGENT_BROWSER_PROFILE AGENT_BROWSER_HEADED
+mkdir -p "$AGENT_BROWSER_PROFILE"
+
+exec "$REAL" "$@"

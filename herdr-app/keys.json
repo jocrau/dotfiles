@@ -66,13 +66,7 @@
     "cmd-shift-down": "agent.next",
     "cmd-k": "mod.open:picker",
     "cmd-o": "layout.toggle:panel",
-    "cmd-g": {
-      "command": "layout.select",
-      "args": {
-        "stack": "panel-body",
-        "child": "changes"
-      }
-    },
+    "cmd-g": "tabs-graph.graph",
     "cmd-shift-o": {
       "command": "terminal.open",
       "args": {
