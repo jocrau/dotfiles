@@ -67,16 +67,7 @@
     "cmd-k": "mod.open:picker",
     "cmd-o": "layout.toggle:panel",
     "cmd-g": "tabs-graph.graph",
-    "cmd-shift-o": {
-      "command": "terminal.open",
-      "args": {
-        "argv": [
-          "/Users/jocrau/.config/herdr/scripts/md-pick.sh"
-        ],
-        "place": "right",
-        "name": "markdown"
-      }
-    },
+    "cmd-shift-o": "tabs-graph.files",
     "cmd-shift-b": "layout.toggle:sidebar"
   },
   "terminal": {
