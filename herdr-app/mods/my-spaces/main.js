@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, home } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -37,6 +37,34 @@ const FALLBACK = 60000;
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+
+// A space's color says what kind of work it holds: the first rule whose folder
+// contains where the space is now (its first terminal's live folder) wins.
+// "exact" rules match that folder only, not what is under it. Spaces no rule
+// matches get the least-used color, as before. The colors are written to the
+// shared "space.colors", so the agents list and the picker show them too.
+const CONTEXTS = [
+  { path: "~/Code/Personal/perpedes", color: "ansi1" },          // Perpedes: pink
+  { path: "~/Code/skihuette-sonderbund", color: "ansi2" },       // ski hut: green
+  { path: "~/Code/mm-plugin-marketplace", color: "ansi5" },      // MM agents & AI: purple
+  { path: "~/Code/mm-ai-platform", color: "ansi5" },
+  { path: "~/Code/carbide-plugin", color: "ansi5" },
+  { path: "~/Code/mm-data-platform", color: "ansi4" },           // MM product code: blue
+  { path: "~/Code/mm-core", color: "ansi4" },
+  { path: "~/Code/mm-services", color: "ansi4" },
+  { path: "~/Code", color: "ansi3", exact: true },               // MM ops, across repos: orange
+  { path: "~", color: "ansi3", exact: true },
+];
+function contextColor(folder) {
+  if (!folder) return null;
+  const h = home().replace(/\/+$/, "");
+  const f = folder.replace(/\/+$/, "");
+  for (const r of CONTEXTS) {
+    const p = r.path.replace(/^~/, h);
+    if (f === p || (!r.exact && f.startsWith(p + "/"))) return r.color;
+  }
+  return null;
+}
 
 // A space speaks up only when something in it needs you.
 export function glyph(status) {
@@ -428,7 +456,11 @@ export default class Spaces extends View {
           .gap(9)
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree, el => el.child(div().relative().flex_none()
+            .child(h_flex().size(18).rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))
+            // An agent in it needs you (red) or finished while you looked elsewhere (green).
+            .when(w.status === "blocked" || w.status === "done", el => el.child(
+              div().absolute().right(-3).bottom(-3).size(8).rounded(4).border(1.5).border_color(on ? t.selected : t.chrome).bg(tone(t, w.status))))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
       );
@@ -458,7 +490,13 @@ export default class Spaces extends View {
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
     let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
+    const ps = panes();
     for (const p of sp) {
+      const ctx = p.machine ? null : contextColor(place(p, ps));
+      if (ctx) {
+        if (kept[p.id] !== ctx) { kept[p.id] = ctx; changed = true; }
+        continue;
+      }
       if (kept[p.id] || p.name === "~") continue;
       const uses = c => Object.values(kept).filter(v => v === c).length;
       kept[p.id] = palette.reduce((best, c) => uses(c) < uses(best) ? c : best);
