@@ -1,15 +1,12 @@
-// file-browser (cmd+shift+o, `mod.open:file-browser`; again closes it): the
+// file-browser (cmd+o, `mod.open:file-browser`; again closes it): the
 // focused terminal's repo as a dialog over the tab. A keyboard-driven tree on
 // the left, the preview-plus viewer on the right (Markdown with Mermaid, JSON,
 // CSV, images, PDF, source with editing). Moving through the tree previews the
 // file under the cursor, as fzf's preview does.
 //
-// Tree:   ↑↓ j k move · → l open folder / step in · ← h close / go to parent
-//         ⏎ open file (keyboard to viewer) or fold · / filter (fuzzy, whole repo)
-//         g G top/bottom · r reload · o open in its app · ⇥ viewer · esc close (the app's)
-//         in the filter: ⇥ to the list; in the list, ⌫ clears the filter
-// Viewer: ⇥ ← h back to tree (← h only while no editor shows) · [ ] previous/next heading · s source/preview
-//         c contents · ⌫ back (after following a link) · o open · ⌘S save
+// Keys (the same scheme as the git graph and beads-view; `?` lists them all):
+// move j k ↑↓ ⌃N⌃P ⌃J⌃K · page ⌃D⌃U PgDn PgUp · ends g G Home End · in l → ⏎ · out h ←
+// next/previous file J K · sections [ ] · filter / (⌫ clears) · pane ⇥ · help ? · close esc (the app's)
 // The viewer is preview-plus's (viewer.js, tree.js and the renderers are copies).
 
 import { div, svg } from "gpui-kit";
@@ -184,14 +181,35 @@ export default class FileBrowser extends Viewer {
 
   closeDialog() { closeOverlay(props()?.overlay); }
 
+  // J/K: the next or previous file (folders skipped), shown at once.
+  fileStep(d, cx) {
+    const rows = this.rows();
+    for (let i = this.at + d; i >= 0 && i < rows.length; i += d) {
+      if (rows[i].dir) continue;
+      this.select(i, rows, cx, false); this.previewToken = null; this.openFile(rows[i].path, cx);
+      return;
+    }
+  }
+
+  // `?` shows every key in place of the viewer; any key closes it.
+  helpKey(e, cx) {
+    if (!this.help) return false;
+    if (!/^(shift|ctrl|alt|cmd|platform|fn)$/.test(e.keystroke)) { this.help = false; cx.notify(); }
+    cx.stop_propagation();
+    return true;
+  }
+
   treeKey(e, cx) {
+    if (this.helpKey(e, cx)) return;
     const k = e.keystroke, rows = this.rows(), row = rows[this.at];
     const typing = this.filtering;
     const done = () => cx.stop_propagation();
-    if (k === "down" || k === "ctrl-n" || (!typing && k === "j")) { done(); return this.select(this.at + 1, rows, cx); }
-    if (k === "up" || k === "ctrl-p" || (!typing && k === "k")) { done(); return this.select(this.at - 1, rows, cx); }
-    if (k === "pagedown") { done(); return this.select(this.at + 15, rows, cx); }
-    if (k === "pageup") { done(); return this.select(this.at - 15, rows, cx); }
+    if (k === "down" || k === "ctrl-n" || k === "ctrl-j" || (!typing && k === "j")) { done(); return this.select(this.at + 1, rows, cx); }
+    if (k === "up" || k === "ctrl-p" || k === "ctrl-k" || (!typing && k === "k")) { done(); return this.select(this.at - 1, rows, cx); }
+    if (k === "pagedown") { done(); return this.select(this.at + 30, rows, cx); }
+    if (k === "pageup") { done(); return this.select(this.at - 30, rows, cx); }
+    if (k === "ctrl-d") { done(); return this.select(this.at + 15, rows, cx); }
+    if (k === "ctrl-u") { done(); return this.select(this.at - 15, rows, cx); }
     // Esc never arrives: the app closes the dialog on it before any mod sees it.
     if (k === "tab" && typing) { done(); this.treeFocus.focus(); return cx.notify(); }
     if (k === "tab") { done(); if (this.selected) this.viewFocus.focus(); return cx.notify(); }
@@ -203,6 +221,9 @@ export default class FileBrowser extends Viewer {
     if (k === "shift-g" || k === "end") { done(); return this.select(rows.length - 1, rows, cx); }
     if (k === "r") { done(); this.files = null; this.nav?.refresh(cx); return; }
     if (k === "o") { done(); return this.open(cx); }
+    if (k === "shift-j") { done(); return this.fileStep(1, cx); }
+    if (k === "shift-k") { done(); return this.fileStep(-1, cx); }
+    if (k === "?" || k === "shift-/") { done(); this.help = true; return cx.notify(); }
     if (!row || row.match) return;
     if (k === "right" || k === "l") {
       done();
@@ -221,6 +242,7 @@ export default class FileBrowser extends Viewer {
 
   // The viewer's keys. Letters only when no editor shows, so typing in Source still types.
   keyDown(e, cx) {
+    if (this.helpKey(e, cx)) return;
     const k = e.keystroke, file = this.selected?.file, type = file ? kind(file) : null;
     const toTree = () => { cx.stop_propagation(); this.treeFocus.focus(); cx.notify(); };
     if (k === "tab" || k === "shift-tab") return toTree();
@@ -236,6 +258,8 @@ export default class FileBrowser extends Viewer {
       c: () => { if (type === "markdown") { this.contents = !this.contents; cx.notify(); } },
       backspace: () => this.history.length && this.back(cx),
       o: () => this.open(cx),
+      "shift-j": () => this.fileStep(1, cx), "shift-k": () => this.fileStep(-1, cx),
+      "?": () => { this.help = true; cx.notify(); }, "shift-/": () => { this.help = true; cx.notify(); },
     }[k];
     if (act) { cx.stop_propagation(); act(); }
   }
@@ -284,8 +308,23 @@ export default class FileBrowser extends Viewer {
         .child(Scrollbar.vertical("fb-tree").absolute().right(0).top(0).bottom(0)))
       .child(div().flex_none().px(12).py(7).border_t(0.5).border_color(colors.border).text_size(11).text_color(colors.dim)
         .child(this.viewFocus.is_focused()
-          ? "⇥ ← tree · [ ] headings · s source · c contents · ⌫ back · esc close"
-          : (this.filter ? "↑↓ move · ⏎ open · ⇥ list · ⌫ clear filter · esc close" : "↑↓ move · ←→ fold · ⏎ open · / filter · ⇥ viewer · esc close")));
+          ? "h ← ⇥ tree · J K files · [ ] headings · s source · ? help"
+          : (this.filter ? "↑↓ move · ⏎ open · ⇥ list · ⌫ clear · ? help" : "j k move · h l fold · ⏎ open · / filter · ⇥ viewer · ? help")));
+  }
+
+  helpPanel(colors) {
+    const groups = [
+      ["Tree", [["j k  ↑ ↓  ⌃N ⌃P", "move (the file under the cursor previews)"], ["⌃D ⌃U  PgDn PgUp", "half / whole page"], ["g G  Home End", "first / last"],
+        ["l →", "open a folder, step in, or show the file"], ["h ←", "close the folder, or go to its parent"], ["⏎", "open the file (keyboard to the viewer)"],
+        ["J K", "next / previous file"], ["/  ⌫", "filter the whole repo (fuzzy), clear it"], ["r  o", "reload / open in its app"]]],
+      ["Viewer", [["h ← ⇥", "back to the tree"], ["J K", "next / previous file"], ["[ ]", "previous / next heading"], ["s  c", "source ⇄ preview / contents"],
+        ["⌫", "back after following a link"], ["⌘S", "save (in Source)"], ["o", "open in its app"]]],
+      ["Window", [["?", "this help (any key closes it)"], ["esc", "close the dialog"]]],
+    ];
+    return v_flex().id("fb-help").size_full().overflow_y_scrollbar().px(20).py(14).gap(14).text_size(12.5)
+      .children(groups.map(([title, rows]) => v_flex().gap(3)
+        .child(div().pb(2).text_size(12).font_semibold().text_color(colors.accent ?? colors.foreground).child(title))
+        .children(rows.map(([keys, what]) => h_flex().gap(12).child(div().w(170).flex_none().child(keys)).child(div().flex_1().min_w(0).text_color(colors.muted).child(what))))));
   }
 
   render(cx) {
@@ -294,7 +333,7 @@ export default class FileBrowser extends Viewer {
     return h_flex().id("file-browser").size_full().min_h(0).overflow_hidden().bg(colors.background)
       .text_color(colors.foreground).font_family(font).text_size(13)
       .child(this.treePane(colors).w(320).flex_none().h_full().border_r(0.5).border_color(colors.border))
-      .child(div().id("fb-view").track_focus(this.viewFocus).flex_1().min_w(0).h_full().child(viewer));
+      .child(div().id("fb-view").track_focus(this.viewFocus).flex_1().min_w(0).h_full().child(this.help ? this.helpPanel(colors) : viewer));
   }
 
   async close(cx) {
