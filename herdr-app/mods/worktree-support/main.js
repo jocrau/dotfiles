@@ -535,7 +535,6 @@ export default class Spaces extends View {
       .text_size(11.5)
       .text_color(t.dim)
       .when(Boolean(where), (el) => el.child(div().min_w(0).when(Boolean(tree), (el) => el.max_w(80)).truncate().child(where)))
-      .when(g.dirty, (el) => el.child(div().flex_none().text_color(t.ansi3).child("●")))
       .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`)))
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)))
       .children(extra);
@@ -632,11 +631,12 @@ export default class Spaces extends View {
           .child(g ? this.gitTail(g, tree, w.name, t, tree ? this.treeTail(r, t) : [])
             : r.mixed ? h_flex().id(`repos-${w.id}`).flex_1().min_w(0).justify_end().text_size(11.5).text_color(t.dim).tooltip("Its terminals are in different repos: see each tab").child(`${r.mixed} repos`)
             : div().flex_1())
-          .when(Boolean(r.fold), (el) => el.child(h_flex().id(`fold-${w.id}`).flex_none().h(18).px(3).gap(3).rounded(4).items_center()
+          // Local change: a fixed slot for the chevron on every space row, so repos and chevrons line up.
+          .when(!tree && !r.fold, (el) => el.child(div().w(18).flex_none()))
+          .when(Boolean(r.fold), (el) => el.child(h_flex().id(`fold-${w.id}`).flex_none().w(18).h(18).justify_center().rounded(4).items_center()
             .text_size(11).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => { cx.stop_propagation(); this.toggleFold(r.fold.repo, cx); })
-            .when(r.fold.folded, (el) => el.child(String(r.fold.count)))
             .child(svg(`mods/workspace-chrome/chevron-${r.fold.folded ? "right" : "down"}.svg`).size(11)))),
       );
   }
