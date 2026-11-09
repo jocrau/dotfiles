@@ -6,15 +6,15 @@
 repo (⎇ linked worktree), branch (* uncommitted, ↑ahead ↓behind), model
 with effort (⚡ fast mode), context used as a bar (yellow from 60%, red
 from 80%), and subscription usage only when a window is at 80% or more
-(herdr's tab bar shows it always).
+(herdr-app's status bar shows it always).
 
 The burn hint `↻180k/call` shows, from 150k, how many tokens the last API
 call read: every call (each tool step of a turn) re-reads the whole
 context, so a large one uses the 5-hour and weekly limits fast, even when
 the bar looks low on a 1M-token model. Time for /compact or a fresh session.
 
-Also saves the rate limits for herdr's tab bar
-(~/.config/herdr/scripts/claude-usage.py). Called by statusline-command.sh.
+Also saves the rate limits for herdr-app's status bar (its my-status mod
+reads ~/.local/state/claude-usage.json). Called by statusline-command.sh.
 """
 import json
 import os
@@ -45,8 +45,8 @@ def freshest(mine, saved):
 
 
 def save_usage(data):
-    """The rate limits merged with the saved ones (shown here and in herdr's
-    tab bar); written atomically. Returns the merged limits."""
+    """The rate limits merged with the saved ones (shown here and in herdr-app's
+    status bar); written atomically. Returns the merged limits."""
     try:
         with open(USAGE, encoding="utf-8") as f:
             saved = json.load(f).get("rate_limits")

@@ -1,2 +1,0 @@
-alexarthurs/herdr-sidebar/plugins/herdr-sidebar
-jeffarese/herdr-bar

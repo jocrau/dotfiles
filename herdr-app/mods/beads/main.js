@@ -5,7 +5,7 @@ import { focused, terminals, hc, exec, home, openOverlay, closeOverlay, props, s
 // as a dialog over the tab, with the keyboard on it.
 // This mod is only a launcher: it starts beads-view, shows it and closes itself.
 // Esc / q in beads-view ends the program, which closes the dialog too.
-const VIEW = "/.config/herdr/scripts/beads-view";
+const VIEW = "/.local/bin/beads-view";
 const KEY = "beads.open"; // { overlay, terminal } while a beads view is open
 
 // Nearest folder with a .beads directory, from cwd up (none: "").

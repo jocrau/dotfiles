@@ -16,8 +16,8 @@ export AWS_HOME=$HOME/.aws
 export ACCEPT_HIGHCHARTS_LICENSE=YES
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
-# Clickable OSC 8 links from Claude Code: herdr TUI panes, and herdr-app (herdr-core) panes
-{ [ "$TERM_PROGRAM" = herdr ] || [ -n "$HC_TERMINAL_ID" ]; } && export FORCE_HYPERLINK=1
+# Clickable OSC 8 links from Claude Code in herdr-app (herdr-core) panes
+[ -n "$HC_TERMINAL_ID" ] && export FORCE_HYPERLINK=1
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
