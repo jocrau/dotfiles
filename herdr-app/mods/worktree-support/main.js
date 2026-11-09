@@ -33,6 +33,12 @@ function place(s, ps) {
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
+// Local change: every terminal's folder in a space, so a space spanning
+// several repos is known as such instead of taking its first terminal's.
+function places(s, ps) {
+  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  return [...new Set(ps.filter((p) => tabs.has(p.tab) && p.cwd).map((p) => JSON.stringify([s.machine ?? null, p.cwd])))];
+}
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // A worktree's identity across its space row and its bare row: machine and top folder.
 const treeKey = (g) => JSON.stringify([JSON.parse(g.repo)[0], g.top]);
@@ -147,7 +153,16 @@ export default class Spaces extends View {
   // The space showing a worktree's top folder, if any.
   spaceAt(path) {
     const ps = panes();
-    return spaces().find((s) => this.git[where(s, ps)]?.top === path) ?? null;
+    return spaces().find((s) => this.spaceGit(s, ps).g?.top === path) ?? null;
+  }
+
+  // A space's git only when its terminals that are in a repo all are in the same
+  // one; otherwise `mixed` says how many repos, and the row shows no git at all.
+  spaceGit(s, ps) {
+    const g = this.git[where(s, ps)] ?? null;
+    const repos = new Set(places(s, ps).map((k) => this.git[k]?.repo).filter(Boolean));
+    if (g) repos.add(g.repo);
+    return repos.size > 1 ? { g: null, mixed: repos.size } : { g, mixed: 0 };
   }
 
   // Actions that need a space id the menu can't wait for (it closes first).
@@ -175,6 +190,7 @@ export default class Spaces extends View {
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);
     const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
+    for (const s of sp) for (const k of places(s, ps)) keys.add(k);
     for (const list of Object.values(this.trees)) for (const wt of list) keys.add(wt.key);
     const due =new Set([...keys].filter((k) => !(k in this.git)));
     for (const [id, k] of Object.entries(at)) if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
@@ -185,7 +201,10 @@ export default class Spaces extends View {
     for (const p of ps) {
       if (!p.terminal || !spaceOf[p.tab]) continue;
       busy[p.pane] = p.status === "working" || !(p.program?.shell || p.program?.agent);
-      if (this.busy[p.pane] && !busy[p.pane]) this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
+      if (this.busy[p.pane] && !busy[p.pane]) {
+        this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
+        if (p.cwd) this.sameRepo(JSON.stringify([spaceOf[p.tab].machine ?? null, p.cwd]), keys).forEach((k) => due.add(k));
+      }
     }
     this.busy = busy;
     for (const m of machines()) {
@@ -372,10 +391,11 @@ export default class Spaces extends View {
 
   menu(w) {
     // A popup is as tall as its items; height is only the most.
+    const { g } = this.spaceGit(w, panes());
     openOverlay({ mod: "worktree-actions", kind: "popup", width: 230, height: 260, props: {
       kind: "space", path: place(w, panes()), machine: w.machine ?? null, space: w.id, editors: this.editors,
-      git: Boolean(this.git[where(w, panes())]),
-      linked: Boolean(this.git[where(w, panes())]?.linked),
+      git: Boolean(g),
+      linked: Boolean(g?.linked),
     } });
   }
 
@@ -384,7 +404,7 @@ export default class Spaces extends View {
     const sp = spaces(), ps = panes();
     const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
-    const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null })).filter((r) => this.shown.has(r.w.id));
+    const list = sp.map((w, i) => ({ w, i, ...this.spaceGit(w, ps) })).filter((r) => this.shown.has(r.w.id));
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
     const nested = (r) => r.g?.linked && mains.has(r.g.repo);
     const out = [];
@@ -521,14 +541,21 @@ export default class Spaces extends View {
       .children(extra);
   }
 
-  // A worktree with no space: a click opens one there, or goes to one opened since.
+  // A worktree with no space: a click goes to a space opened there since, else to a
+  // tab of the repo's space already in the worktree, else opens such a tab.
+  // (Local change: upstream opens a new space; the menu's "Open as space" still does.)
   looseRow(r, t) {
     const { wt, w, g, tree } = r;
     const name = wt.branch ?? base(wt.path);
     const open = () => {
       const s = this.spaceAt(wt.path);
-      if (s) run("space.select", { id: s.id });
-      else run("space.new", { folder: wt.path, ...(w.machine ? { machine: w.machine } : {}) });
+      if (s) return run("space.select", { id: s.id });
+      const tabs = new Set((w.tabs ?? []).map((c) => c.id));
+      const inside = (cwd) => cwd === wt.path || cwd?.startsWith(`${wt.path}/`);
+      const there = panes().find((p) => tabs.has(p.tab) && inside(p.cwd));
+      run("space.select", { id: w.id });
+      if (there) run("tab.select", { id: there.tab });
+      else run("tab.new", { space: w.id, folder: wt.path, name });
     };
     return h_flex()
       .id(`worktree-${wt.key}`)
@@ -596,9 +623,15 @@ export default class Spaces extends View {
           .gap(9)
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree, el => el.child(div().relative().flex_none()
+            .child(h_flex().size(18).rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))
+            // Local addition (from my-spaces): an agent in it needs you (red) or finished while you looked elsewhere.
+            .when(w.status === "blocked" || w.status === "done", el => el.child(
+              div().absolute().right(-3).bottom(-3).size(8).rounded(4).border(1.5).border_color(on ? t.selected : t.chrome).bg(tone(t, w.status))))))
           .child(div().when(Boolean(tree), (el) => el.flex_1().min_w(0)).when(!tree, (el) => el.flex_shrink(0).max_w(150)).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t, tree ? this.treeTail(r, t) : []) : div().flex_1())
+          .child(g ? this.gitTail(g, tree, w.name, t, tree ? this.treeTail(r, t) : [])
+            : r.mixed ? h_flex().id(`repos-${w.id}`).flex_1().min_w(0).justify_end().text_size(11.5).text_color(t.dim).tooltip("Its terminals are in different repos: see each tab").child(`${r.mixed} repos`)
+            : div().flex_1())
           .when(Boolean(r.fold), (el) => el.child(h_flex().id(`fold-${w.id}`).flex_none().h(18).px(3).gap(3).rounded(4).items_center()
             .text_size(11).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

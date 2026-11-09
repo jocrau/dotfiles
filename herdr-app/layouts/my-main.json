@@ -29,7 +29,7 @@
               "id": "spaces",
               "type": "block",
               "content": {
-                "mod": "my-spaces"
+                "mod": "worktree-support"
               },
               "size": {
                 "weight": 1
