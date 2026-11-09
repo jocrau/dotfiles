@@ -130,6 +130,28 @@ export function hitLabel(labels, x, start, limit = Infinity) {
 }
 
 const shortHash = (hash) => hash.slice(0, 8);
+// Local change: branch tracking for fast-forward and push.
+// `for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:track)%00%(upstream:short) refs/heads`
+export const BRANCHES = ["for-each-ref", "--format=%(refname)%00%(upstream)%00%(upstream:track)%00%(upstream:short)", "refs/heads"];
+export function parseBranches(text) {
+  const names = [], tracking = {};
+  for (const line of text.split("\n").filter(Boolean)) {
+    const [ref, upstream, track = "", short = ""] = line.split("\0");
+    if (!ref?.startsWith("refs/heads/")) continue;
+    const name = ref.slice(11);
+    names.push(name);
+    if (upstream) tracking[name] = { upstream, short, gone: track.includes("gone"),
+      ahead: Number(track.match(/ahead (\d+)/)?.[1] ?? 0), behind: Number(track.match(/behind (\d+)/)?.[1] ?? 0) };
+  }
+  return { names, tracking };
+}
+// Branches that only lack their upstream's commits: a fast-forward brings them level.
+export const fastForwardable = (ctx) => Object.entries(ctx.tracking ?? {})
+  .filter(([, t]) => t.behind > 0 && !t.ahead && !t.gone)
+  .map(([name, t]) => ({ name, upstream: t.upstream, short: t.short, current: name === ctx.current }));
+const remoteRef = (s) => typeof s === "string" && s.startsWith("refs/remotes/") && refName(s.slice(13));
+// The current branch merges --ff-only; another is updated with a local fetch, which refuses anything but a fast-forward.
+const ffCommand = (b) => b.current ? ["merge", "--ff-only", b.upstream] : ["fetch", ".", `${b.upstream}:refs/heads/${b.name}`];
 const currentName = (ctx) => ctx.current ?? "HEAD";
 const section = (...items) => items.filter(Boolean);
 const item = (label, icon, action) => ({ label, icon, action });
@@ -155,7 +177,12 @@ export function menuFor(target, ctx) {
         !current && item("Delete branch…", "trash", { type: "deleteBranch", name })),
       section(!current && item(`Merge into ${cur}…`, "merge", { type: "merge", ref: name, what: `branch ${name}` }),
         !current && item(`Rebase ${cur} on this branch…`, "rebase", { type: "rebase", ref: name, what: `branch ${name}` })),
-      section(ctx.remotes.length > 0 && item("Push branch…", "push", { type: "push", name })),
+      section((() => {
+        const tr = ctx.tracking?.[name];
+        return tr && tr.behind > 0 && !tr.ahead && !tr.gone && item(`Fast-forward to ${tr.short}`, "fetch", { type: "ffBranch", name, upstream: tr.upstream, short: tr.short, current });
+      })(),
+        current && ctx.tracking?.[name] && !ctx.tracking[name].gone && ctx.tracking[name].ahead > 0 && item(`Push to ${ctx.tracking[name].short}`, "push", { type: "pushCurrent", name }),
+        ctx.remotes.length > 0 && item("Push branch…", "push", { type: "push", name })),
       section(item("Copy branch name", "copy", { type: "copy", text: name })),
     ];
   } else if (target.kind === "remote") {
@@ -312,6 +339,9 @@ export function commandsFor(a, v = {}, ctx = {}) {
   if (a.type === "reset" && !["soft", "mixed", "hard"].includes(v.mode)) throw new Error("Invalid reset mode");
   if (a.type === "resetUncommitted" && !["mixed", "hard"].includes(v.mode)) throw new Error("Invalid reset mode");
   if (a.type === "commit" && !String(v.message ?? "").trim()) throw new Error("Empty commit message");
+  if (a.type === "ffBranch" && (!refName(a.name) || !remoteRef(a.upstream))) throw new Error("Invalid branch");
+  if (a.type === "ffAll" && !(Array.isArray(a.list) && a.list.length && a.list.every((b) => refName(b.name) && remoteRef(b.upstream)))) throw new Error("Invalid branches");
+  if (a.type === "pushCurrent" && (!refName(a.name) || a.name !== ctx.current)) throw new Error("Not the current branch");
   const name = String(v.name ?? "").trim(), message = String(v.message ?? "").trim();
   switch (a.type) {
     case "checkout": return [["checkout", a.name]];
@@ -337,6 +367,9 @@ export function commandsFor(a, v = {}, ctx = {}) {
     case "stash": return [["stash", "push", ...(v.untracked ? ["--include-untracked"] : []), ...(message ? ["-m", message] : [])]];
     case "resetUncommitted": return [["reset", `--${v.mode}`, "HEAD"]];
     case "fetch": return [["fetch", "--all"]];
+    case "ffBranch": return [ffCommand({ ...a, current: a.name === ctx.current })];
+    case "ffAll": return a.list.map((b) => ffCommand({ ...b, current: b.name === ctx.current }));
+    case "pushCurrent": return [["push"]];
     default: throw new Error("Unknown Git action");
   }
 }
@@ -365,6 +398,9 @@ export function doneText(a, v = {}) {
     case "stash": return "Stashed uncommitted changes";
     case "resetUncommitted": return `Reset uncommitted changes (${v.mode})`;
     case "fetch": return "Fetched";
+    case "ffBranch": return `Fast-forwarded ${a.name} to ${a.short}`;
+    case "ffAll": return `Fast-forwarded ${a.list.map((b) => b.name).join(", ")}`;
+    case "pushCurrent": return `Pushed ${a.name}`;
     default: return "Done";
   }
 }

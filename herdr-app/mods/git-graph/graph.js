@@ -2,11 +2,11 @@
 // commit) for the focused pane's repository, or `props.folder` when opened as
 // a pane. Labels take double-clicks (checkout) and right-clicks (menus).
 import { div, svg, PathBuilder } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, InputState } from "gpui-base";
 import { spaces, panes, focused, exec, watchFolder, readTextFile, theme, settings, props, shared, setShared, openOverlay, home, notify, knownAgents, updates } from "herdr";
 import { layoutLanes } from "./lanes.js";
 import { READ, STATUS, UNCOMMITTED, LABEL, logArgs, parseLog, parseStatus, withUncommitted, labelsOf, hitLabel,
-  menuFor, menuHeight, fileArgs, joinFiles, diffArgs, diffRows } from "./git.js";
+  menuFor, menuHeight, fileArgs, joinFiles, diffArgs, diffRows, BRANCHES, parseBranches, fastForwardable } from "./git.js";
 import { perform, openDialog, showChanges } from "./act.js";
 import { icon } from "./menu.js";
 import { available, check, openUpdate, newer } from "./update.js";
@@ -19,6 +19,21 @@ function location(folder) {
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
   return { cwd: pane?.cwd || f?.cwd || space?.folder, on };
 }
+
+// Local change: fzf-like score for the branch picker (letters in order; runs,
+// segment starts and the last segment score higher).
+function fuzzy(term, text) {
+  const q = term.toLowerCase(), p = text.toLowerCase(), name = p.lastIndexOf("/") + 1;
+  let score = 0, j = 0, run = 0, last = -2;
+  for (let i = 0; i < p.length && j < q.length; i++) {
+    if (p[i] !== q[j]) continue;
+    run = i === last + 1 ? run + 1 : 0;
+    score += 1 + run * 3 + (i >= name ? 2 : 0) + (i === 0 || "/_-. ".includes(p[i - 1]) ? 4 : 0);
+    last = i; j++;
+  }
+  return j === q.length ? score - p.length * 0.01 : null;
+}
+const MORE_ROUNDS = 15; // pages loaded at most to reach a branch or the next match
 
 const PAGE = 300, ROW = 24, LANE = 12, PAD = 6, DIFF_ROW = 20;
 // Herdr 0.1.12 zooms a list itself ("Lists in mods follow the zoom"): its row
@@ -69,7 +84,7 @@ const folderState = () => ({
   state: "loading", root: null, on: null, cwd: null, error: null,
   workspace: null, statuses: new Map(), opened: null, skipped: false,
   base: [], commits: [], rows: [], lanes: 1, labels: new Map(), index: new Map(), hasMore: false, limit: PAGE, files: [], ctx: null,
-  head: null, current: null, branches: [], remoteNames: [], signature: null, scope: null, moreAsked: null,
+  head: null, current: null, branches: [], tracking: {}, remoteNames: [], signature: null, scope: null, moreAsked: null,
   selected: null, details: null, diff: null,
 });
 
@@ -81,7 +96,7 @@ async function readFolder(cwd, on, { all, remotes, limit }) {
     // One commit past the page says whether there are more, as Git Graph asks.
     exec("git", ["rev-parse", "--show-toplevel"], { cwd, on }), git(logArgs({ all, remotes, limit: limit + 1 })),
     git(["rev-parse", "--verify", "-q", "HEAD"]), git(["symbolic-ref", "-q", "--short", "HEAD"]),
-    git(["for-each-ref", "--format=%(refname)", "refs/heads"]), git(["remote"]), git(STATUS)]);
+    git(BRANCHES), git(["remote"]), git(STATUS)]);
   if (top.code !== 0) return { state: "norepo", cwd, on };
   // A log that fails without a HEAD is a repository with no commits yet.
   if (log.code !== 0 && head.code === 0) throw new Error(log.stderr.trim());
@@ -89,7 +104,7 @@ async function readFolder(cwd, on, { all, remotes, limit }) {
   return {
     root: top.stdout.trim(), on, cwd, base: base.slice(0, limit), limit, hasMore: base.length > limit,
     head: head.code === 0 ? head.stdout.trim() : null, current: current.code === 0 ? current.stdout.trim() : null,
-    branches: branches.stdout.split("\n").filter(Boolean).map((r) => r.replace(/^refs\/heads\//, "")),
+    branches: parseBranches(branches.stdout).names, tracking: parseBranches(branches.stdout).tracking,
     remoteNames: remoteNames.stdout.split("\n").filter(Boolean),
     files: status.code === 0 ? parseStatus(status.stdout) : [],
     signature: [log.stdout, head.stdout, current.stdout, branches.stdout, remoteNames.stdout].join("\0"), scope: scopeOf({ all, remotes }),
@@ -133,6 +148,21 @@ export class Graph {
     // Herdr's agents per machine, for a row's "New … tab" (as its + menu lists them).
     this.agents = new Map();
     this.handle = cx.focus_handle();
+    // Local change: opened as a dialog (cmd+g), the graph takes the keyboard.
+    this.dialog = Boolean(props()?.overlay);
+    this.scrollHandle = VirtualListScrollHandle.new(); this.cursor = null;
+    // `/` search over the loaded commits; `b` branch picker.
+    this.search = { query: "", matches: [], typing: false };
+    this.searchInput = InputState.new({ placeholder: "Search messages, authors, hashes, branches" });
+    this.searchInput.on("focus", (_e, cx) => { this.search.typing = true; cx.notify(); });
+    this.searchInput.on("blur", (_e, cx) => { this.search.typing = false; cx.notify(); });
+    this.searchInput.on("change", (_e, cx) => { this.search.query = this.searchInput.value(); this.runSearch(cx); });
+    this.searchInput.on("submit", (_e, cx) => { this.handle.focus(); cx.notify(); });
+    this.bp = null; this.bpScroll = VirtualListScrollHandle.new();
+    this.bpInput = InputState.new({ placeholder: "Branch" });
+    this.bpInput.on("change", (_e, cx) => { if (this.bp) { this.bp.query = this.bpInput.value(); this.bp.at = 0; } cx.notify(); });
+    this.bpInput.on("submit", (e, cx) => this.bpChoose(Boolean(e?.modifiers?.shift), cx));
+    if (this.dialog) { this.handle.focus(); cx.timer.after(300, () => this.handle.focus()); }
     this.reset();
     this.refresh(cx);
     cx.timer.after(1500, (cx) => this.warm(cx));
@@ -352,9 +382,10 @@ export class Graph {
     this.commits = commits; this.rows = rows; this.lanes = width;
     this.labels = new Map(commits.map((c) => [c.hash, labelsOf(c, this.remotes)]));
     this.index = new Map(commits.map((c, i) => [c.hash, i]));
-    this.ctx = { root: this.root, on: this.on, current: this.current, head: this.head, branches: this.branches, remotes: this.remoteNames };
+    this.ctx = { root: this.root, on: this.on, current: this.current, head: this.head, branches: this.branches, tracking: this.tracking, remotes: this.remoteNames };
     this.state = commits.length ? "ready" : "empty"; this.error = null;
     if (this.selected && !this.index.has(this.selected)) { this.selected = null; this.details = null; this.diff = null; }
+    if (this.search?.query) this.indexMatches();
   }
 
   // Ref moves reload the history; other edits only the uncommitted row, at most every 1.5 s.
@@ -403,6 +434,260 @@ export class Graph {
       this.fetching = false; this.refresh(cx); cx.notify();
     });
     cx.notify();
+  }
+
+  // Local change: keyboard navigation of the graph. A cursor row moves with the
+  // keys; with the details open they follow it, as the file viewer previews.
+  cursorIndex() {
+    const i = this.cursor ? this.index.get(this.cursor) : undefined;
+    if (i !== undefined) return i;
+    const head = this.commits.findIndex((c) => c.head);
+    return head >= 0 ? head : 0;
+  }
+
+  moveTo(i, cx, why) {
+    if (i === undefined || i < 0 || !this.commits.length) {
+      if (why) notify({ title: why, level: "info", timeout: 2500 });
+      return;
+    }
+    i = Math.min(i, this.commits.length - 1);
+    const commit = this.commits[i];
+    this.cursor = commit.hash;
+    this.scrollHandle.scroll_to_item(i, "center");
+    if (i >= this.commits.length - 3 && this.hasMore && !this.loading) cx.spawn(async (cx) => this.loadMore(cx));
+    if (this.selected && this.selected !== commit.hash) {
+      this.selected = commit.hash; this.details = null; this.diff = null;
+      const token = this.detailsToken = {};
+      // loadDetails answers a commit seen before from its cache without redrawing: redraw here.
+      cx.timer.after(120, (cx) => { if (this.detailsToken === token && this.selected === commit.hash) { this.loadDetails(commit, cx); cx.notify(); } });
+    }
+    cx.notify();
+  }
+
+  // The nearest row from `from` in `step` direction whose labels pass `test`.
+  seek(from, step, test) {
+    for (let i = from + step; i >= 0 && i < this.commits.length; i += step) {
+      if ((this.labels.get(this.commits[i].hash) ?? []).some(test)) return i;
+    }
+    return undefined;
+  }
+
+  refIndex(kind, name) {
+    const i = this.commits.findIndex((c) => (c.refs ?? []).some((r) => r.kind === kind && r.name === name));
+    return i >= 0 ? i : undefined;
+  }
+
+  // Local branch ⇄ its upstream: from a branch label to where its upstream is,
+  // from a remote label to the local branch that tracks it.
+  toggleTracking(cx) {
+    const commit = this.commits[this.cursorIndex()], refs = commit?.refs ?? [];
+    for (const r of refs.filter((r) => r.kind === "branch")) {
+      const tr = this.tracking?.[r.name];
+      if (tr && !tr.gone) return this.moveTo(this.refIndex("remote", tr.short), cx, `${tr.short} isn't in the graph (Remotes off, or "Current" only)`);
+    }
+    for (const r of refs.filter((r) => r.kind === "remote")) {
+      const local = Object.entries(this.tracking ?? {}).find(([, t]) => t.short === r.name)?.[0];
+      if (local) return this.moveTo(this.refIndex("branch", local), cx, `${local} isn't in the graph`);
+    }
+    notify({ title: "No tracking pair here", body: "The row has no local branch with an upstream, and no remote branch a local one tracks.", level: "info", timeout: 3000 });
+  }
+
+  // The actions menu for the cursor row, as a right-click on its first label would open it.
+  keyMenu(cx) {
+    const commit = this.commits[this.cursorIndex()];
+    if (!commit || !this.ctx) return;
+    const part = commit.uncommitted ? null : (this.labels.get(commit.hash) ?? []).flatMap((l) => l.parts).find((p) => p.kind !== "head");
+    const target = commit.uncommitted ? { kind: "uncommitted", commit: brief(commit), staged: this.files.some((f) => f.staged) }
+      : part ? { kind: part.kind, name: part.name, commit: brief(commit) } : { kind: "commit", commit: brief(commit) };
+    const items = menuFor(target, this.ctx);
+    openOverlay({ mod: "git-graph", kind: "popup", at: { x: Math.round((this.width ?? 800) * 0.35), y: 140 }, width: 268, height: menuHeight(items), props: { role: "menu", target, ctx: this.ctx } });
+  }
+
+  navKey(e, cx) {
+    const k = e.keystroke, i = this.cursorIndex(), n = this.commits.length;
+    const is = (...names) => names.includes(k);
+    const label = (test) => (l) => l.parts.some(test);
+    if (is("down", "j")) return this.moveTo(Math.min(n - 1, i + 1), cx), true;
+    if (is("up", "k")) return this.moveTo(Math.max(0, i - 1), cx), true;
+    if (is("pagedown", "ctrl-d")) return this.moveTo(Math.min(n - 1, i + 20), cx), true;
+    if (is("pageup", "ctrl-u")) return this.moveTo(Math.max(0, i - 20), cx), true;
+    if (is("g", "home")) return this.moveTo(0, cx), true;
+    if (is("shift-g", "end")) return this.moveTo(n - 1, cx), true;
+    // Any label (branch, remote, tag) / local branches only.
+    if (is("]")) return this.moveTo(this.seek(i, 1, () => true), cx, "No more labelled commits below"), true;
+    if (is("[")) return this.moveTo(this.seek(i, -1, () => true), cx, "No labelled commits above"), true;
+    if (is("}", "shift-]", "shift-}")) return this.moveTo(this.seek(i, 1, label((p) => p.kind === "branch")), cx, "No more branches below"), true;
+    if (is("{", "shift-[", "shift-{")) return this.moveTo(this.seek(i, -1, label((p) => p.kind === "branch")), cx, "No branches above"), true;
+    if (is("t")) return this.toggleTracking(cx), true;
+    if (is(".", "@", "shift-2")) return this.moveTo(this.commits.findIndex((c) => c.head), cx, "HEAD isn't in the graph"), true;
+    if (is("u")) {
+      const tr = this.current ? this.tracking?.[this.current] : null;
+      return this.moveTo(tr ? this.refIndex("remote", tr.short) : undefined, cx, tr ? `${tr.short} isn't in the graph` : `${this.current ?? "HEAD"} has no upstream`), true;
+    }
+    if (is("m")) {
+      const main = ["main", "master"].find((b) => this.branches.includes(b));
+      return this.moveTo(main ? this.refIndex("branch", main) : this.refIndex("remote", "origin/main") ?? this.refIndex("remote", "origin/master"), cx, "No main or master branch in the graph"), true;
+    }
+    if (is("^", "shift-6")) {
+      const parent = this.commits[i]?.parents?.[0];
+      return this.moveTo(parent ? this.index.get(parent) : undefined, cx, "Its parent isn't loaded (or it has none)"), true;
+    }
+    if (is("enter")) { const c = this.commits[i]; if (c) this.pick(c, cx); return true; }
+    if (is("space")) return this.keyMenu(cx), true;
+    if (is("a")) return this.setScope(!this.all, cx), true;
+    if (is("/")) { this.searchInput.focus(); cx.notify(); return true; }
+    if (is("n")) return this.searchStep(1, cx), true;
+    if (is("shift-n")) return this.searchStep(-1, cx), true;
+    if (is("backspace") && this.search.query) return this.clearSearch(cx), true;
+    if (is("b")) return this.openBranches(cx), true;
+    return false;
+  }
+
+  // Local change: `/` search. Every term must appear in the subject, author, hash or a ref name.
+  indexMatches() {
+    const terms = this.search.query.toLowerCase().split(/\s+/).filter(Boolean), out = [];
+    if (terms.length) this.commits.forEach((c, i) => {
+      if (c.uncommitted) return;
+      const hay = `${c.subject}\n${c.author}\n${c.hash}\n${(c.refs ?? []).map((r) => r.name).join(" ")}`.toLowerCase();
+      if (terms.every((t) => hay.includes(t))) out.push(i);
+    });
+    this.search.matches = out;
+    this.matchSet = new Set(out.map((i) => this.commits[i].hash));
+  }
+
+  // As you type, the cursor goes to the first match from where it is.
+  runSearch(cx) {
+    this.indexMatches();
+    const m = this.search.matches, i = this.cursorIndex();
+    const next = m.find((x) => x >= i) ?? m[0];
+    if (next !== undefined) this.moveTo(next, cx);
+    cx.notify();
+  }
+
+  // n / N: the next or previous match; past the loaded history, load more and keep looking.
+  searchStep(step, cx, fresh = true) {
+    if (!this.search.query) return;
+    if (fresh) this.searchRounds = 0;
+    const m = this.search.matches, i = this.cursorIndex();
+    const next = step > 0 ? m.find((x) => x > i) : [...m].reverse().find((x) => x < i);
+    if (next !== undefined) return this.moveTo(next, cx);
+    if (step > 0 && this.hasMore && this.searchRounds++ < MORE_ROUNDS) { this.pendingSearch = step; return this.loadMore(cx); }
+    if (m.length) return this.moveTo(step > 0 ? m[0] : m[m.length - 1], cx); // wrap
+    notify({ title: "No match", body: `Nothing matches "${this.search.query}" in the ${this.commits.length} commits shown.`, level: "info", timeout: 3000 });
+  }
+
+  clearSearch(cx) {
+    this.search.query = ""; this.search.matches = []; this.matchSet = null; this.searchInput.set_value("");
+    this.handle.focus(); cx.notify();
+  }
+
+  // `b`: every local and remote branch, most recently committed first, fuzzy-filtered.
+  openBranches(cx) {
+    if (!this.root) return;
+    this.bp = { refs: null, query: "", at: 0 };
+    this.bpInput.set_value(""); this.bpInput.focus();
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...READ, "for-each-ref", "--sort=-committerdate",
+        "--format=%(refname)%00%(objectname)%00%(committerdate:relative)%00%(upstream:short)", "refs/heads", "refs/remotes"], { cwd: this.root, on: this.on }).catch(() => null);
+      if (!this.bp) return;
+      this.bp.refs = r?.code !== 0 ? [] : r.stdout.split("\n").filter(Boolean).map((line) => {
+        const [ref, hash, when, up] = line.split("\0");
+        return { kind: ref.startsWith("refs/heads/") ? "branch" : "remote", name: ref.replace(/^refs\/(heads|remotes)\//, ""), hash, when, up };
+      }).filter((b) => !b.name.endsWith("/HEAD"));
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  bpRows() {
+    const refs = this.bp?.refs ?? [], q = this.bp?.query.trim() ?? "";
+    if (!q) return refs;
+    const terms = q.split(/\s+/), scored = [];
+    for (const r of refs) {
+      let total = 0;
+      for (const t of terms) { const s = fuzzy(t, r.name); if (s === null) { total = null; break; } total += s; }
+      if (total !== null) scored.push([total, r]);
+    }
+    return scored.sort((a, b) => b[0] - a[0]).map(([, r]) => r);
+  }
+
+  closeBranches(cx) { this.bp = null; this.handle.focus(); cx.notify(); }
+
+  // ⏎ jumps to the branch; ⇧⏎ checks it out too (a remote one as a tracking branch).
+  bpChoose(checkout, cx) {
+    const row = this.bpRows()[this.bp?.at ?? 0];
+    if (!row) return;
+    this.closeBranches(cx);
+    if (checkout && row.name !== this.current) this.checkout({ kind: row.kind, name: row.name }, cx);
+    this.jumpTo(row.hash, cx);
+  }
+
+  // To a commit that may not be loaded yet: load pages until it is.
+  jumpTo(hash, cx) {
+    const i = this.index.get(hash);
+    if (i !== undefined) return this.moveTo(i, cx);
+    if (!this.hasMore) return notify({ title: "Not in the graph", body: this.all ? (this.remotes ? "It isn't reachable from what the graph shows." : "Turn Remotes on to see remote branches.") : "Press a to show all branches.", level: "info", timeout: 3500 });
+    this.pendingJump = hash; this.jumpRounds = 0; this.loadMore(cx);
+  }
+
+  // After a page loads: finish a jump or a search that was waiting for it.
+  resolvePending(cx) {
+    if (this.pendingJump) {
+      const hash = this.pendingJump, i = this.index.get(hash);
+      if (i !== undefined) { this.pendingJump = null; return this.moveTo(i, cx); }
+      if (!this.hasMore || ++this.jumpRounds > MORE_ROUNDS) { this.pendingJump = null; return notify({ title: "Not found in the history loaded", body: `Looked through ${this.commits.length} commits.`, level: "info", timeout: 3500 }); }
+      return this.loadMore(cx);
+    }
+    if (this.pendingSearch) { const step = this.pendingSearch; this.pendingSearch = null; this.searchStep(step, cx, false); }
+  }
+
+  branchPanel(t) {
+    const rows = this.bpRows(), loading = !this.bp.refs;
+    this.bp.at = Math.max(0, Math.min(this.bp.at, rows.length - 1));
+    const id = `${this.listId}-bp`;
+    return v_flex().flex_1().min_h(0).px(10).py(8).gap(6)
+      .child(h_flex().h(32).flex_none().px(8).gap(6).items_center().rounded(7).border_1().border_color(t.accent).bg(t.background)
+        .child(svg(icon("branch")).size(13).flex_none().text_color(t.dim))
+        .child(Input.new(this.bpInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
+      .child(div().flex_none().px(2).text_size(11).text_color(t.dim)
+        .child(loading ? "Reading branches…" : `${rows.length} branches, newest first · ↑↓ move · ⏎ jump · ⇧⏎ checkout · ⇥ back`))
+      .child(div().relative().flex_1().min_h(0)
+        .child(v_virtual_list(id, rows.length, 26, (i) => `${rows[i].kind}:${rows[i].name}`, (range) => rows.slice(range.start, range.end).map((r, o) => {
+          const i = range.start + o, local = r.kind === "branch";
+          return h_flex().h(26).px(8).gap(8).items_center().rounded(6).text_size(12.5).when(i === this.bp.at, (el) => el.bg(t.selected))
+            .child(svg(icon(local ? "branch" : "cloud")).size(12).flex_none().text_color(local ? t.muted : t.dim))
+            .child(div().flex_1().min_w(0).truncate().text_color(r.name === this.current ? t.accent : local ? t.foreground : t.muted).child(r.name))
+            .when(Boolean(r.up), (el) => el.child(div().flex_none().max_w(220).truncate().text_size(11).text_color(t.dim).child(`\u2192 ${r.up}`)))
+            .child(div().flex_none().w(110).text_right().truncate().text_size(11).text_color(t.dim).child(r.when));
+        })).track_scroll(this.bpScroll)
+          .on_item_click((key, cx) => { const i = rows.findIndex((r) => `${r.kind}:${r.name}` === key); if (i >= 0) { this.bp.at = i; this.bpChoose(false, cx); } })
+          .size_full())
+        .child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0()));
+  }
+
+  // Local change: the day-to-day sync actions, from the header and the keyboard.
+  // ff: every branch that only lacks its upstream's commits; push: the current
+  // branch to its upstream (the dialog when it has none); commit: the dialog.
+  syncAction(kind, cx) {
+    const ctx = this.ctx;
+    if (!ctx || this.syncing) return;
+    let action;
+    if (kind === "ff") {
+      const list = fastForwardable(ctx);
+      if (!list.length) return notify({ title: "Nothing to fast-forward", body: "Every branch is level with or ahead of its upstream. Fetch (f) to look again.", level: "info", timeout: 3000 });
+      action = { type: "ffAll", list };
+    } else if (kind === "push") {
+      const tr = ctx.current ? ctx.tracking?.[ctx.current] : null;
+      if (!ctx.current || !ctx.remotes.length) return;
+      if (!tr || tr.gone) return void openDialog({ type: "push", name: ctx.current }, ctx);
+      if (!tr.ahead) return notify({ title: "Nothing to push", body: `${ctx.current} is level with ${tr.short}.`, level: "info", timeout: 3000 });
+      action = { type: "pushCurrent", name: ctx.current };
+    } else if (kind === "commit") {
+      if (this.files.length) openDialog({ type: "commit", staged: false }, ctx);
+      return;
+    } else return;
+    this.syncing = kind; cx.notify();
+    cx.spawn(async (cx) => { await perform(action, {}, ctx).catch(() => {}); this.syncing = null; this.refresh(cx); cx.notify(); });
   }
 
   graphWidth() { return this.cols.graph ? this.clampColumn("graph", this.cols.graph) : Math.min(Math.max(GRAPH_MIN, PAD * 2 + this.lanes * LANE), this.graphMax); }
@@ -491,6 +776,7 @@ export class Graph {
   }
 
   pick(commit, cx) {
+    this.cursor = commit.hash;
     if (this.selected === commit.hash) { this.selected = null; this.details = null; this.diff = null; cx.notify(); return; }
     this.selected = commit.hash; this.details = null; this.diff = null;
     this.loadDetails(commit, cx);
@@ -591,7 +877,9 @@ export class Graph {
     // Merge commits are muted, as Git Graph does by default.
     const fg = commit.uncommitted ? t.muted : commit.parents.length > 1 ? t.dim : t.foreground;
     return h_flex().id(`c-${commit.hash}`).w_full().h(this.rowH()).flex_none().pr(10).gap(LABEL.GAP).items_center().overflow_hidden()
-      .when(commit.head, (e) => e.bg(color + "14")).when(this.selected === commit.hash, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover))
+      .when(commit.head, (e) => e.bg(color + "14")).when(Boolean(this.matchSet?.has(commit.hash)), (e) => e.bg(t.ansi3 + "22"))
+      .when(this.selected === commit.hash, (e) => e.bg(t.selected))
+      .when(this.cursor === commit.hash && this.selected !== commit.hash, (e) => e.bg(t.accent + "24")).hover((s) => s.bg(t.hover))
       .child(this.graphCell(row, commit, colors, t, width))
       // Labels and description clip together, so many labels never push the fixed columns out.
       .child(h_flex().flex_1().min_w(0).h_full().gap(LABEL.GAP).items_center().overflow_hidden()
@@ -617,6 +905,9 @@ export class Graph {
     // drops the same rows down over the graph to switch to another.
     const repo = ws && this.opened ? ws.repos.find((r) => r.path === this.opened) : null;
     const settingsShown = this.state === "workspace" || (this.state === "norepo" && !this.skipped);
+    const tr = this.current ? this.tracking?.[this.current] : null;
+    const ffCount = this.ctx ? fastForwardable(this.ctx).length : 0;
+    const canPush = Boolean(this.current) && this.remoteNames?.length > 0 && (!tr || tr.gone || tr.ahead > 0);
     return h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
       .when(!repo, (e) => e.child(div().text_size(13).font_semibold().child(ws ? "Manygit" : "Git")))
       .when(Boolean(repo), (e) => e
@@ -629,7 +920,13 @@ export class Graph {
       .when(ready && Boolean(where), (e) => e.child(h_flex().h(22).px(7).gap(5).min_w(0).items_center().rounded(6).bg(t.accent + "26").text_color(t.accent)
         .child(svg(icon(this.current ? "branch" : "commit")).size(12).flex_none()).child(div().min_w(0).truncate().text_size(11.5).font_semibold().child(where))))
       .when(this.state === "workspace", (e) => e.child(div().flex_none().text_size(11.5).text_color(t.dim).child(count(ws.repos.length, "repo"))))
+      .when(ready && Boolean(tr), (e) => e.child(h_flex().gap(4).flex_none().items_center().text_size(11.5)
+        .child(div().text_color(t.dim).child(tr.gone ? `${tr.short} (gone)` : tr.short))
+        .when(tr.ahead > 0, (el) => el.child(div().text_color(t.ansi2).child(`\u2191${tr.ahead}`)))
+        .when(tr.behind > 0, (el) => el.child(div().text_color(t.ansi1).child(`\u2193${tr.behind}`)))))
       .child(div().flex_1())
+      .when(ready && ffCount > 0, (e) => e.child(this.iconButton("graph-ff", "fetch", this.syncing === "ff" ? "Fast-forwarding…" : `Fast-forward ${ffCount}`, false, (_e, cx) => this.syncAction("ff", cx), t)))
+      .when(ready && canPush, (e) => e.child(this.iconButton("graph-push", "push", this.syncing === "push" ? "Pushing…" : tr && !tr.gone ? `Push \u2191${tr.ahead}` : "Publish", false, (_e, cx) => this.syncAction("push", cx), t)))
       // A newer release: a dot, and the update window on click.
       .when(Boolean(available()), (e) => e.child(h_flex().id("graph-update").h(24).px(7).gap(5).flex_none().items_center().rounded(6).text_size(11.5)
         .cursor_pointer().text_color(t.accent).hover((s) => s.bg(t.hover)).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -729,7 +1026,18 @@ export class Graph {
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.setRemotes(cx))
         .child(div().size(13).rounded(3).border_1().border_color(this.remotes ? t.accent : t.input).when(this.remotes, (e) => e.bg(t.accent)).flex().items_center().justify_center()
           .when(this.remotes, (e) => e.child(svg(icon("check")).size(10).text_color(t.accent_foreground))))
-        .child("Remotes"));
+        .child("Remotes"))
+      .when(this.search.typing || Boolean(this.search.query), (e) => {
+        const m = this.search.matches, at = m.indexOf(this.cursorIndex());
+        return e.child(h_flex().flex_1().min_w(0).h(24).ml(6).px(8).gap(6).items_center().rounded(6).border_1()
+          .border_color(this.search.typing ? t.accent : t.border).bg(t.background)
+          .child(div().flex_none().text_size(11.5).text_color(t.dim).child("/"))
+          .child(Input.new(this.searchInput).flex_1().h_full().text_size(11.5).text_color(t.foreground))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child(this.search.query ? `${at >= 0 ? at + 1 : "–"}/${m.length}${this.hasMore ? "+" : ""}` : ""))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child("n N next/prev · ⇥ graph · ⌫ clear")));
+      })
+      .when(this.dialog && !this.search.typing && !this.search.query, (e) => e.child(div().flex_1().min_w(0).pl(12).truncate().text_right().text_size(11).text_color(t.dim)
+        .child("/ search · b branches · j k move · [ ] labels · { } branches · t local\u21c4upstream · . HEAD · u upstream · m main · ^ parent · \u23ce details · space actions · f fetch · \u21e7F ff · p push · c commit")));
   }
 
   columns(t, width) {
@@ -764,6 +1072,7 @@ export class Graph {
         // Rows of a virtual list can't hold their own handlers: the list reports the row's key.
         .on_item_click((key, cx) => this.clicked(key, cx))
         .on_item_secondary_click((key, e, cx) => this.contextMenu(key, e, cx))
+        .track_scroll(this.scrollHandle)
         .size_full())
       .child(Scrollbar.vertical(this.listId).viewport_from_layout().absolute().inset_0());
   }
@@ -860,6 +1169,10 @@ export class Graph {
     // New settings: a depth searches again, tags read every row again.
     const setting = `${depthSetting()} ${tagsShown()}`;
     if (setting !== this.seenSetting) { const first = this.seenSetting === undefined; this.seenSetting = setting; if (!first && !this.opened) this.refresh(cx); }
+    if ((this.pendingJump || this.pendingSearch) && !this.loading && !this.resolving) {
+      this.resolving = true;
+      cx.timer.after(0, (cx) => { this.resolving = false; this.resolvePending(cx); });
+    }
     const t = theme(), mono = settings().font_family ?? "JetBrains Mono", ready = this.state === "ready";
     return v_flex().id("git-graph").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(12.5).track_focus(this.handle)
@@ -867,6 +1180,32 @@ export class Graph {
       .on_mouse_up("left", (_e, cx) => this.endDrag(cx))
       .on_hover((hovered, cx) => { if (!hovered) this.endDrag(cx); })
       .on_key_down((e, cx) => {
+        const k = e.keystroke;
+        // The branch picker's field has the keyboard: ↑↓ move, ⇥ back (⏎ / ⇧⏎ arrive as its submit).
+        if (this.bp) {
+          const rows = this.bpRows(), move = (d) => { this.bp.at = Math.max(0, Math.min(rows.length - 1, this.bp.at + d)); this.bpScroll.scroll_to_item(this.bp.at); };
+          if (k === "down" || k === "ctrl-n") move(1);
+          else if (k === "up" || k === "ctrl-p") move(-1);
+          else if (k === "pagedown") move(15);
+          else if (k === "pageup") move(-15);
+          else if (k === "tab" || k === "shift-tab") return this.closeBranches(cx), cx.stop_propagation();
+          else return;
+          cx.stop_propagation(); cx.notify(); return;
+        }
+        // Typing a search: ↑↓ step through matches, ⇥ back to the graph; letters are the query's.
+        if (this.search.typing) {
+          if (k === "down" || k === "ctrl-n") this.searchStep(1, cx);
+          else if (k === "up" || k === "ctrl-p") this.searchStep(-1, cx);
+          else if (k === "tab" || k === "shift-tab") this.handle.focus();
+          else return;
+          cx.stop_propagation(); cx.notify(); return;
+        }
+        if (this.state === "ready" && !this.picking) {
+          const act = { f: () => this.fetch(cx), "shift-f": () => this.syncAction("ff", cx), p: () => this.syncAction("push", cx),
+            c: () => this.syncAction("commit", cx), r: () => this.refresh(cx) }[e.keystroke];
+          if (act) { act(); cx.stop_propagation(); cx.notify(); return; }
+          if (this.navKey(e, cx)) { cx.stop_propagation(); return; }
+        }
         if (e.key !== "escape" || !(this.selected || this.opened)) return;
         // Esc closes the dropdown, a diff, then the details, then goes back to the Manygit list.
         if (this.picking) this.picking = false; else if (this.diff) this.diff = null; else if (this.selected) { this.selected = null; this.details = null; } else this.back(cx);
@@ -880,7 +1219,8 @@ export class Graph {
       .child(this.header(t))
       .when(this.state === "workspace", (e) => e.child(this.workspaceList(t)))
       .when(Boolean(this.picking && this.workspace && this.opened), (e) => e.child(this.picker(t)))
-      .when(ready, (e) => e.child(this.toolbar(t)).child(this.columns(t, this.graphWidth())).child(this.list(t, mono))
+      .when(ready && Boolean(this.bp), (e) => e.child(this.branchPanel(t)))
+      .when(ready && !this.bp, (e) => e.child(this.toolbar(t)).child(this.columns(t, this.graphWidth())).child(this.list(t, mono))
         .when(Boolean(this.selected), (el) => el.child(this.detailsPane(t, mono))))
       .when(!ready && this.state !== "workspace", (e) => e.child(this.empty(t)));
   }
