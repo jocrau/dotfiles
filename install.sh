@@ -27,21 +27,22 @@ link() {
 for f in keys.json settings.json layouts/my-main.json; do
   link "herdr-app/$f" "$HOME/.config/herdr-app/$f"
 done
-for mod in "$REPO"/herdr-app/mods/*/; do
+# Mods shared with others live in the herdr-layout repo (github.com/jocrau/herdr-layout),
+# cloned beside this one; only personal mods stay here. Mods are linked as whole
+# folders: herdr-app refuses an import whose real path is outside the mod's folder.
+LAYOUT=${HERDR_LAYOUT:-$(dirname "$REPO")/herdr-layout}
+for mod in "$REPO"/herdr-app/mods/*/ "$LAYOUT"/mods/*/; do
+  [ -d "$mod" ] || continue
   name=$(basename "$mod")
-  # A mod that imports its own modules is linked as a whole folder: herdr-app
-  # refuses an import whose real path is outside the mod's folder.
-  if ls "$mod"*.js | grep -qv '/main\.js$'; then
-    link "herdr-app/mods/$name" "$HOME/.config/herdr-app/mods/$name"
-    continue
-  fi
-  for f in "$mod"*; do
-    link "herdr-app/mods/$name/$(basename "$f")" "$HOME/.config/herdr-app/mods/$name/$(basename "$f")"
-  done
+  dst="$HOME/.config/herdr-app/mods/$name"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "${mod%/}" ]; then echo "ok      $dst"; continue; fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then mv "$dst" "$dst.bak-$STAMP"; echo "backup  $dst -> $dst.bak-$STAMP"; fi
+  ln -s "${mod%/}" "$dst"; echo "linked  $dst -> ${mod%/}"
 done
+[ -d "$LAYOUT/mods" ] || echo "missing $LAYOUT: clone github.com/jocrau/herdr-layout beside this repo (or set HERDR_LAYOUT)"
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
-link beads-view/beads-view "$HOME/.local/bin/beads-view"  # herdr-app's beads mod (cmd+b) runs it
+[ -f "$LAYOUT/mods/beads/beads-view" ] && ln -sfn "$LAYOUT/mods/beads/beads-view" "$HOME/.local/bin/beads-view"  # beads-view on PATH too
 link claude/statusline-command.sh "$HOME/.claude/statusline-command.sh"
 link claude/skills/app-browser/SKILL.md "$HOME/.claude/skills/app-browser/SKILL.md"
 link bin/agent-browser "$HOME/bin/agent-browser"
@@ -54,6 +55,7 @@ cat <<EOF
 
 Not linked (do once by hand on a new machine):
   - herdr-app:          curl -fsSL https://releases.herdr.dev/app/install.sh | sh  (also installs herdr-core, hc)
+  - herdr-layout:       git clone git@github.com:jocrau/herdr-layout.git "$(dirname "$REPO")/herdr-layout"  (the shared mods; before running this script)
   - agent-browser:      npm install -g agent-browser  (bin/agent-browser wraps it: one visible Chrome and login profile per repo)
   - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo
   - Commit identity:    git -C "$REPO" config user.email <id>+<login>@users.noreply.github.com

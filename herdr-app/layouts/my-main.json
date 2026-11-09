@@ -40,7 +40,7 @@
               "id": "agents",
               "type": "block",
               "content": {
-                "mod": "my-agents"
+                "mod": "space-agents"
               },
               "size": {
                 "weight": 1
@@ -160,7 +160,7 @@
           "id": "status",
           "type": "block",
           "content": {
-            "mod": "my-status"
+            "mod": "usage-status"
           },
           "size": {
             "px": 28
