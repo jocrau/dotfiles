@@ -65,9 +65,9 @@
     "cmd-shift-up": "agent.prev",
     "cmd-shift-down": "agent.next",
     "cmd-k": "mod.open:picker",
-    "cmd-o": "layout.toggle:panel",
-    "cmd-g": "tabs-graph.graph",
-    "cmd-shift-o": "mod.open:file-browser",
+    "cmd-o": "mod.open:file-browser",
+    "cmd-g": "mod.open:git-graph",
+    "cmd-shift-o": "layout.toggle:panel",
     "cmd-shift-b": "layout.toggle:sidebar"
   },
   "terminal": {
