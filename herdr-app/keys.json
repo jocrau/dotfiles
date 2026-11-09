@@ -67,7 +67,7 @@
     "cmd-k": "mod.open:picker",
     "cmd-o": "layout.toggle:panel",
     "cmd-g": "tabs-graph.graph",
-    "cmd-shift-o": "tabs-graph.files",
+    "cmd-shift-o": "mod.open:file-browser",
     "cmd-shift-b": "layout.toggle:sidebar"
   },
   "terminal": {
