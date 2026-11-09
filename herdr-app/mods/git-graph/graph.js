@@ -3,7 +3,7 @@
 // a pane. Labels take double-clicks (checkout) and right-clicks (menus).
 import { div, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Input, InputState } from "gpui-base";
-import { spaces, panes, focused, exec, watchFolder, readTextFile, theme, settings, props, shared, setShared, openOverlay, home, notify, knownAgents, updates } from "herdr";
+import { spaces, panes, focused, exec, watchFolder, readTextFile, theme, settings, props, shared, setShared, openOverlay, home, notify, knownAgents, updates, appHome, run } from "herdr";
 import { layoutLanes } from "./lanes.js";
 import { READ, STATUS, UNCOMMITTED, LABEL, logArgs, parseLog, parseStatus, withUncommitted, labelsOf, hitLabel,
   menuFor, menuHeight, fileArgs, joinFiles, diffArgs, diffRows, BRANCHES, parseBranches, fastForwardable } from "./git.js";
@@ -151,11 +151,15 @@ export class Graph {
     // Local change: opened as a dialog (cmd+g), the graph takes the keyboard.
     this.dialog = Boolean(props()?.overlay);
     this.scrollHandle = VirtualListScrollHandle.new(); this.cursor = null;
+    this.fileScroll = VirtualListScrollHandle.new(); this.diffScroll = VirtualListScrollHandle.new();
+    this.zone = "graph"; this.fileAt = 0; this.diffAt = 0;
+    { const v = Number(shared("git-graph.split")); this.split = v > 0 ? v : null; }
     // `/` search over the loaded commits; `b` branch picker.
     this.search = { query: "", matches: [], typing: false };
     this.searchInput = InputState.new({ placeholder: "Search messages, authors, hashes, branches" });
     this.searchInput.on("focus", (_e, cx) => { this.search.typing = true; cx.notify(); });
-    this.searchInput.on("blur", (_e, cx) => { this.search.typing = false; cx.notify(); });
+    // Left empty, the field goes away again.
+    this.searchInput.on("blur", (_e, cx) => { this.search.typing = false; if (!this.search.query) this.search.open = false; cx.notify(); });
     this.searchInput.on("change", (_e, cx) => { this.search.query = this.searchInput.value(); this.runSearch(cx); });
     this.searchInput.on("submit", (_e, cx) => { this.handle.focus(); cx.notify(); });
     this.bp = null; this.bpScroll = VirtualListScrollHandle.new();
@@ -456,7 +460,7 @@ export class Graph {
     this.scrollHandle.scroll_to_item(i, "center");
     if (i >= this.commits.length - 3 && this.hasMore && !this.loading) cx.spawn(async (cx) => this.loadMore(cx));
     if (this.selected && this.selected !== commit.hash) {
-      this.selected = commit.hash; this.details = null; this.diff = null;
+      this.selected = commit.hash; this.details = null; this.diff = null; this.diffWant = null; this.fileAt = 0;
       const token = this.detailsToken = {};
       // loadDetails answers a commit seen before from its cache without redrawing: redraw here.
       cx.timer.after(120, (cx) => { if (this.detailsToken === token && this.selected === commit.hash) { this.loadDetails(commit, cx); cx.notify(); } });
@@ -507,6 +511,8 @@ export class Graph {
     const k = e.keystroke, i = this.cursorIndex(), n = this.commits.length;
     const is = (...names) => names.includes(k);
     const label = (test) => (l) => l.parts.some(test);
+    if (is("ctrl-n", "ctrl-j")) return this.moveTo(Math.min(n - 1, i + 1), cx), true;
+    if (is("ctrl-p", "ctrl-k")) return this.moveTo(Math.max(0, i - 1), cx), true;
     if (is("down", "j")) return this.moveTo(Math.min(n - 1, i + 1), cx), true;
     if (is("up", "k")) return this.moveTo(Math.max(0, i - 1), cx), true;
     if (is("pagedown", "ctrl-d")) return this.moveTo(Math.min(n - 1, i + 20), cx), true;
@@ -532,10 +538,22 @@ export class Graph {
       const parent = this.commits[i]?.parents?.[0];
       return this.moveTo(parent ? this.index.get(parent) : undefined, cx, "Its parent isn't loaded (or it has none)"), true;
     }
-    if (is("enter")) { const c = this.commits[i]; if (c) this.pick(c, cx); return true; }
+    // ⏎ / l / →: review the commit (the files take the keyboard); x closes the review.
+    if (is("enter", "l", "right")) {
+      const c = this.commits[i];
+      if (!c) return true;
+      if (this.selected !== c.hash) this.pick(c, cx);
+      this.zone = "files"; this.fileAt = this.fileAt ?? 0; cx.notify();
+      return true;
+    }
+    if (is("x") && this.selected) return this.closeDetails(cx), true;
+    if (is("-") && this.selected) return this.setSplit(this.detailsHeight() - 3 * ROW, cx), true;
+    if (is("=") && this.selected) return this.setSplit(this.detailsHeight() + 3 * ROW, cx), true;
+    if (is("tab") && this.selected) { this.zone = "files"; cx.notify(); return true; }
     if (is("space")) return this.keyMenu(cx), true;
     if (is("a")) return this.setScope(!this.all, cx), true;
-    if (is("/")) { this.searchInput.focus(); cx.notify(); return true; }
+    // An input takes the keyboard only once it's drawn: show the field, focus it next frame.
+    if (is("/")) { this.search.open = true; cx.notify(); cx.timer.after(0, () => this.searchInput.focus()); return true; }
     if (is("n")) return this.searchStep(1, cx), true;
     if (is("shift-n")) return this.searchStep(-1, cx), true;
     if (is("backspace") && this.search.query) return this.clearSearch(cx), true;
@@ -577,7 +595,7 @@ export class Graph {
   }
 
   clearSearch(cx) {
-    this.search.query = ""; this.search.matches = []; this.matchSet = null; this.searchInput.set_value("");
+    this.search.query = ""; this.search.open = false; this.search.matches = []; this.matchSet = null; this.searchInput.set_value("");
     this.handle.focus(); cx.notify();
   }
 
@@ -585,7 +603,7 @@ export class Graph {
   openBranches(cx) {
     if (!this.root) return;
     this.bp = { refs: null, query: "", at: 0 };
-    this.bpInput.set_value(""); this.bpInput.focus();
+    this.bpInput.set_value(""); cx.timer.after(0, () => this.bpInput.focus());
     cx.spawn(async (cx) => {
       const r = await exec("git", [...READ, "for-each-ref", "--sort=-committerdate",
         "--format=%(refname)%00%(objectname)%00%(committerdate:relative)%00%(upstream:short)", "refs/heads", "refs/remotes"], { cwd: this.root, on: this.on }).catch(() => null);
@@ -609,6 +627,24 @@ export class Graph {
       if (total !== null) scored.push([total, r]);
     }
     return scored.sort((a, b) => b[0] - a[0]).map(([, r]) => r);
+  }
+
+  // `?`: every key, grouped as the file and beads viewers list theirs.
+  helpPanel(t) {
+    const groups = [
+      ["Move", [["j k  ↑ ↓  ⌃N ⌃P", "commit by commit"], ["⌃D ⌃U  PgDn PgUp", "half / whole page"], ["g G  Home End", "first / last"],
+        ["[ ]", "previous / next labelled commit"], ["{ }", "previous / next branch"], ["t", "local branch ⇄ its upstream"],
+        [". u m", "HEAD / upstream / main"], ["^", "first parent"], ["/  n N  ⌫", "search, next / previous match, clear"], ["b", "branch picker (⏎ jump, ⇧⏎ checkout)"]]],
+      ["Review", [["⏎ l →", "review the commit (files take the keyboard)"], ["j k", "files (the diff follows)"], ["J K", "previous / next commit"],
+        ["⌃D ⌃U  space", "scroll the diff"], ["[ ]", "previous / next hunk"], ["h ← ⇥", "back to the graph"], ["o", "open the file at this commit in your editor (read-only snapshot)"], ["- =", "smaller / larger review"], ["x", "close the review"]]],
+      ["Git", [["f", "fetch"], ["⇧F", "fast-forward every branch only behind its upstream"], ["⇧P", "push the current branch (asks first)"],
+        ["⇧C", "commit (asks for the message)"], ["space", "actions menu for the row"], ["a", "all branches / current"], ["r", "refresh"]]],
+      ["Window", [["?", "this help (any key closes it)"], ["esc", "close the dialog"]]],
+    ];
+    return v_flex().id("graph-help").flex_1().min_h(0).overflow_y_scrollbar().px(18).py(12).gap(14).text_size(12)
+      .children(groups.map(([title, rows]) => v_flex().gap(3)
+        .child(div().pb(2).text_size(11.5).font_semibold().text_color(t.accent).child(title))
+        .children(rows.map(([keys, what]) => h_flex().gap(12).child(div().w(170).flex_none().text_color(t.foreground).child(keys)).child(div().flex_1().min_w(0).text_color(t.muted).child(what))))));
   }
 
   closeBranches(cx) { this.bp = null; this.handle.focus(); cx.notify(); }
@@ -681,7 +717,8 @@ export class Graph {
       if (!ctx.current || !ctx.remotes.length) return;
       if (!tr || tr.gone) return void openDialog({ type: "push", name: ctx.current }, ctx);
       if (!tr.ahead) return notify({ title: "Nothing to push", body: `${ctx.current} is level with ${tr.short}.`, level: "info", timeout: 3000 });
-      action = { type: "pushCurrent", name: ctx.current };
+      // Asks first (⏎ confirms): a push reaches beyond this machine.
+      return void openDialog({ type: "pushCurrent", name: ctx.current, short: tr.short }, ctx);
     } else if (kind === "commit") {
       if (this.files.length) openDialog({ type: "commit", staged: false }, ctx);
       return;
@@ -705,6 +742,8 @@ export class Graph {
   }
 
   moveDrag(e, cx) {
+    const sd = this.splitDrag;
+    if (sd) { this.split = sd.from - (e.position.y - sd.y) / this.unit(); sd.moved = true; cx.notify(); return; }
     const d = this.drag;
     if (!d) return;
     const w = this.clampColumn(d.key, d.from + COLUMNS[d.key].side * (e.position.x - d.x) / this.unit());
@@ -712,6 +751,8 @@ export class Graph {
   }
 
   endDrag(cx) {
+    const sd = this.splitDrag;
+    if (sd) { this.splitDrag = null; if (sd.moved) this.setSplit(this.detailsHeight(), cx); return; }
     const d = this.drag;
     if (!d) return;
     this.drag = null;
@@ -777,11 +818,33 @@ export class Graph {
 
   pick(commit, cx) {
     this.cursor = commit.hash;
-    if (this.selected === commit.hash) { this.selected = null; this.details = null; this.diff = null; cx.notify(); return; }
-    this.selected = commit.hash; this.details = null; this.diff = null;
+    if (this.selected === commit.hash) return this.closeDetails(cx);
+    this.selected = commit.hash; this.details = null; this.diff = null; this.diffWant = null; this.fileAt = 0;
     this.loadDetails(commit, cx);
     this.handle.focus();
+    this.keepCursorVisible(cx);
     cx.notify();
+  }
+
+  // Local change: the review's height: dragged or keyed (remembered), else half the dialog (320 in a panel).
+  detailsHeight() {
+    const room = this.height ? this.height - 42 - 34 - 24 : 640;
+    const want = this.split ?? (this.dialog && this.height ? Math.round(room * 0.5) : 320);
+    return Math.round(Math.max(160, Math.min(want, room - 3 * ROW)));
+  }
+
+  // The line between graph and review drags (double-click: back to half); - and = from the keyboard.
+  setSplit(h, cx) {
+    this.split = h === null ? null : Math.round(h);
+    // Shared, not localStorage: each dialog opening is a new copy of the mod.
+    setShared("git-graph.split", this.split);
+    this.keepCursorVisible(cx); cx.notify();
+  }
+
+
+  // The graph shrinks when the pane opens: once it's laid out, centre the cursor row in it.
+  keepCursorVisible(cx) {
+    cx.timer.after(0, () => { const i = this.cursor ? this.index.get(this.cursor) : undefined; if (i !== undefined) this.scrollHandle.scroll_to_item(i, "center"); });
   }
 
   loadDetails(commit, cx) {
@@ -1027,7 +1090,7 @@ export class Graph {
         .child(div().size(13).rounded(3).border_1().border_color(this.remotes ? t.accent : t.input).when(this.remotes, (e) => e.bg(t.accent)).flex().items_center().justify_center()
           .when(this.remotes, (e) => e.child(svg(icon("check")).size(10).text_color(t.accent_foreground))))
         .child("Remotes"))
-      .when(this.search.typing || Boolean(this.search.query), (e) => {
+      .when(this.search.open || this.search.typing || Boolean(this.search.query), (e) => {
         const m = this.search.matches, at = m.indexOf(this.cursorIndex());
         return e.child(h_flex().flex_1().min_w(0).h(24).ml(6).px(8).gap(6).items_center().rounded(6).border_1()
           .border_color(this.search.typing ? t.accent : t.border).bg(t.background)
@@ -1036,8 +1099,8 @@ export class Graph {
           .child(div().flex_none().text_size(11).text_color(t.dim).child(this.search.query ? `${at >= 0 ? at + 1 : "–"}/${m.length}${this.hasMore ? "+" : ""}` : ""))
           .child(div().flex_none().text_size(11).text_color(t.dim).child("n N next/prev · ⇥ graph · ⌫ clear")));
       })
-      .when(this.dialog && !this.search.typing && !this.search.query, (e) => e.child(div().flex_1().min_w(0).pl(12).truncate().text_right().text_size(11).text_color(t.dim)
-        .child("/ search · b branches · j k move · [ ] labels · { } branches · t local\u21c4upstream · . HEAD · u upstream · m main · ^ parent · \u23ce details · space actions · f fetch · \u21e7F ff · p push · c commit")));
+      .when(this.dialog && !this.search.open && !this.search.typing && !this.search.query, (e) => e.child(div().flex_1().min_w(0).pl(12).truncate().text_right().text_size(11).text_color(t.dim)
+        .child("j k move · / search · b branches · \u23ce review · \u21e7P push · \u21e7F ff · ? help")));
   }
 
   columns(t, width) {
@@ -1077,67 +1140,153 @@ export class Graph {
       .child(Scrollbar.vertical(this.listId).viewport_from_layout().absolute().inset_0());
   }
 
+  // Local change: commit review as a split. Changed files on the left (they keep
+  // the keyboard), the selected file's diff beside them; graph ⇄ files ⇄ diff by keyboard.
   detailsPane(t, mono) {
     const commit = this.commits[this.index.get(this.selected)], d = this.details;
     if (!commit) return div();
-    const top = h_flex().h(32).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).text_size(11.5);
+    const zone = this.zone ?? "graph";
     const close = div().id("graph-details-close").px(6).py(1).rounded(4).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_click((_e, cx) => { this.selected = null; this.details = null; this.diff = null; cx.notify(); }).child("×");
-    if (this.diff) {
-      const rows = this.diff.rows;
-      return v_flex().flex_none().h(320).border_t(1).border_color(t.border)
-        .child(top.child(div().id("graph-diff-back").px(6).py(1).rounded(4).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .on_click((_e, cx) => { this.diff = null; cx.notify(); }).child("← Files"))
-          .child(div().flex_1().min_w(0).truncate().font_family(mono).text_color(t.foreground).child(this.diff.path)).child(close))
-        .child(div().flex_1().min_h(0).relative().font_family(mono).text_size(11)
-          .when(!rows, (e) => e.child(div().p(12).text_color(t.dim).child("Loading diff…")))
-          .when(Boolean(rows), (e) => e.child(div().id(`${this.diffId}-x`).size_full().overflow_x_scrollbar()
-              .child(div().w_full().min_w(this.diff.width).h_full().child(v_virtual_list(this.diffId, rows.length, DIFF_ROW, (i) => String(i),
-                (range) => rows.slice(range.start, range.end).map((r) => this.diffRow(r, t))).size_full())))
-            .child(Scrollbar.vertical(this.diffId).viewport_from_layout().absolute().inset_0())));
-    }
+      .on_click((_e, cx) => this.closeDetails(cx)).child("×");
     const title = commit.uncommitted ? "Uncommitted changes" : `Commit ${commit.hash.slice(0, 8)}`;
-    const body = v_flex().id("graph-details").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4);
-    const pane = (content) => v_flex().flex_none().h(320).border_t(1).border_color(t.border)
-      .child(top.child(div().flex_1().text_color(t.muted).child(title))
+    const files = d?.files ?? [];
+    if (files.length) this.fileAt = Math.max(0, Math.min(this.fileAt ?? 0, files.length - 1));
+    const meta = (k, v, color) => h_flex().gap(8).text_size(11.5).child(div().w(64).flex_none().text_color(t.dim).child(k)).child(div().min_w(0).truncate().text_color(color ?? t.muted).child(v));
+    const lines = commit.uncommitted || !d?.message ? "" : d.message.split("\n").slice(1).join("\n").trim();
+    const info = v_flex().id("graph-details").flex_none().max_h(230).overflow_y_scrollbar().px(14).py(10).gap(4)
+      .when(!commit.uncommitted, (el) => el
+        .child(div().font_semibold().child(commit.subject))
+        .child(meta("Commit", commit.hash, t.accent).font_family(mono))
+        .child(meta("Parents", commit.parents.map((p) => p.slice(0, 8)).join(", ") || "none"))
+        .child(meta("Author", `${commit.author} <${commit.email}>`))
+        .child(meta("Date", `${stamp(commit.time)} · ${ago(commit.time)}`)))
+      .when(Boolean(d?.committer && d.committer !== d.author), (el) => el.child(meta("Committer", d.committer)))
+      .when(Boolean(lines), (el) => el.child(v_flex().pt(6).children(lines.split("\n").map((line) => div().text_color(t.muted).child(line || " ")))))
+      .when(Boolean(d?.error), (el) => el.child(div().text_color(t.ansi1).child(d.error)));
+    const add = files.reduce((n, f) => n + f.add, 0), del = files.reduce((n, f) => n + f.del, 0);
+    const filesId = `${this.listId}-files`;
+    const fileList = v_virtual_list(filesId, files.length, 24, (i) => String(i), (range) => files.slice(range.start, range.end).map((f, o) => {
+      const i = range.start + o, parts = f.path.split("/"), name = parts.pop();
+      const sc = f.status === "A" ? t.ansi2 : f.status === "D" || f.status === "U" ? t.ansi1 : t.blocked;
+      return h_flex().h(24).px(8).gap(8).items_center().rounded(6)
+        .when(i === this.fileAt, (e) => e.bg(zone === "files" ? t.selected : t.hover))
+        .child(div().w(12).flex_none().text_size(11).text_color(sc).child(f.status))
+        .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().min_w(0).truncate().child(name)))
+        .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`)))
+        .when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
+    })).track_scroll(this.fileScroll)
+      .on_item_click((key, cx) => { this.fileAt = Number(key); this.zone = "files"; this.handle.focus(); cx.notify(); })
+      .size_full();
+    const leftWidth = Math.round(Math.min(560, Math.max(300, (this.width ?? 900) * 0.34)));
+    const left = v_flex().w(leftWidth).flex_none().h_full().min_h(0).border_r(1).border_color(t.border)
+      .child(h_flex().h(32).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).text_size(11.5)
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(title))
         .when(Boolean(commit.uncommitted), (e) => e.child(div().id("graph-open-changes").px(6).py(1).rounded(4).text_color(t.accent).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_click(() => showChanges()).child("Open Changes")))
         .child(close))
-      .child(content);
-    if (d?.error) return pane(body.child(div().text_color(t.ansi1).child(d.error)));
-    const meta = (k, v, color) => h_flex().gap(8).text_size(11.5).child(div().w(64).flex_none().text_color(t.dim).child(k)).child(div().min_w(0).truncate().text_color(color ?? t.muted).child(v));
-    // The history already has the header: it shows at once, and what git adds lands below it.
-    const head = commit.uncommitted ? body : body
-      .child(div().font_semibold().child(commit.subject))
-      .child(meta("Commit", commit.hash, t.accent).font_family(mono))
-      .child(meta("Parents", commit.parents.map((p) => p.slice(0, 8)).join(", ") || "none"))
-      .child(meta("Author", `${commit.author} <${commit.email}>`))
-      .child(meta("Date", `${stamp(commit.time)} · ${ago(commit.time)}`));
-    if (!d) return pane(head.child(div().pt(8).text_size(11.5).text_color(t.dim).child(commit.uncommitted ? "Loading…" : "Loading files…")));
-    const add = d.files.reduce((n, f) => n + f.add, 0), del = d.files.reduce((n, f) => n + f.del, 0);
-    const lines = commit.uncommitted ? "" : d.message.split("\n").slice(1).join("\n").trim();
-    return pane(head
-      .when(Boolean(d.committer && d.committer !== d.author), (el) => el.child(meta("Committer", d.committer)))
-      .when(Boolean(lines), (el) => el.child(v_flex().pt(6).children(lines.split("\n").map((line) => div().text_color(t.muted).child(line || " ")))))
-      .child(h_flex().pt(8).pb(2).gap(8).items_center().text_size(11.5)
-        .child(div().text_color(t.muted).child(count(d.files.length + d.more, "file")))
+      .child(info)
+      .child(h_flex().h(26).flex_none().px(14).gap(8).items_center().text_size(11.5).border_t(1).border_color(t.border)
+        .child(div().text_color(zone === "files" ? t.accent : t.muted).when(zone === "files", (e) => e.font_semibold()).child(d ? count(files.length + (d.more ?? 0), "file") : "Loading files…"))
         .when(add > 0 || del > 0, (e) => e.child(div().text_color(t.ansi2).child(`+${add}`)).child(div().text_color(t.ansi1).child(`−${del}`))))
-      .children(d.files.map((f, i) => {
-        const parts = f.path.split("/"), name = parts.pop();
-        const sc = f.status === "A" ? t.ansi2 : f.status === "D" || f.status === "U" ? t.ansi1 : t.blocked;
-        return h_flex().id(`gf-${i}`).h(24).flex_none().px(6).gap(8).items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.openDiff(commit, f, cx))
-          .child(div().w(12).flex_none().text_size(11).text_color(sc).child(f.status))
-          .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().min_w(0).truncate().child(name)))
-          .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`)))
-          .when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      }))
-      .when(d.more > 0, (e) => e.child(div().text_size(11).text_color(t.dim).child(`and ${d.more} more`))));
+      .child(div().relative().flex_1().min_h(0).px(4).child(fileList).child(Scrollbar.vertical(filesId).viewport_from_layout().absolute().inset_0()));
+    const diff = this.diff, rows = diff?.rows;
+    const right = v_flex().flex_1().min_w(0).h_full().min_h(0)
+      .child(h_flex().h(32).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).text_size(11.5)
+        .child(div().flex_1().min_w(0).truncate().font_family(mono).text_color(t.foreground).child(diff?.path ?? (files.length ? "" : d ? "No changed files" : ""))))
+      .child(div().flex_1().min_h(0).relative().font_family(mono).text_size(11)
+        .when(Boolean(diff) && !rows, (e) => e.child(div().p(12).text_color(t.dim).child("Loading diff…")))
+        .when(Boolean(rows), (e) => e.child(div().id(`${this.diffId}-x`).size_full().overflow_x_scrollbar()
+            .child(div().w_full().min_w(diff.width).h_full().child(v_virtual_list(this.diffId, rows.length, DIFF_ROW, (i) => String(i),
+              (range) => rows.slice(range.start, range.end).map((r) => this.diffRow(r, t))).track_scroll(this.diffScroll).size_full())))
+          .child(Scrollbar.vertical(this.diffId).viewport_from_layout().absolute().inset_0())));
+    const handle = div().id("graph-split").h(6).flex_none().w_full().cursor_row_resize().flex().items_center()
+      .on_mouse_down("left", (e, cx) => {
+        cx.stop_propagation();
+        if (e.click_count >= 2) return this.setSplit(null, cx);
+        this.splitDrag = { y: e.position.y, from: this.detailsHeight() };
+      })
+      .child(div().h(1).w_full().bg(this.splitDrag ? t.accent : t.border))
+      .hover((s) => s.bg(t.hover));
+    return v_flex().flex_none().h(this.detailsHeight()).child(handle)
+      .child(h_flex().flex_1().min_h(0).child(left).child(right));
   }
 
-  diffRow({ kind, number, text }, t) {
-    if (kind === "@") return div().w_full().px(12).h(DIFF_ROW).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
+  // Local change: `o` opens the selected file as it was at the commit (a read-only
+  // snapshot; a deleted file as it was just before), or the real file for uncommitted
+  // changes, in $VISUAL/$EDITOR: a GUI editor directly (without --wait), a terminal
+  // one in a new tab, else macOS's default text editor.
+  openAtCommit(cx) {
+    const commit = this.commits[this.index.get(this.selected)], file = this.details?.files?.[this.fileAt ?? 0];
+    if (!commit || !file) return;
+    if (this.on) return notify({ title: "Only on this computer", body: "Opening a file in your editor works for local repositories.", level: "info", timeout: 3000 });
+    const root = this.root;
+    cx.spawn(async () => {
+      let path = `${root}/${file.path}`;
+      if (!commit.uncommitted) {
+        const rev = file.status === "D" ? `${commit.hash}^` : commit.hash;
+        path = `${appHome()}/data/git-graph/snapshots/${commit.hash.slice(0, 8)}/${file.path}`;
+        const r = await exec("sh", ["-c", 'mkdir -p "$(dirname "$2")" && rm -f "$2" && git show "$1" > "$2" && chmod 444 "$2"', "sh", `${rev}:${file.path}`, path], { cwd: root });
+        if (r.code !== 0) return notify({ title: "Couldn't read that version", body: r.stderr.trim(), level: "error" });
+      }
+      const ed = (await exec("sh", ["-c", 'printf %s "${VISUAL:-$EDITOR}"']).catch(() => null))?.stdout.trim().replace(/\s+(--wait|-w)\b/g, "") ?? "";
+      const prog = ed.split(/\s+/)[0]?.split("/").pop() ?? "";
+      if (/^(n?vim?|vi|nano|emacs|hx|helix|micro|kak|joe|ne)$/.test(prog)) {
+        return run("tab.new", { folder: root, name: file.path.split("/").pop(), argv: ["sh", "-c", `${ed} "$1"`, "sh", path] });
+      }
+      const o = await exec("sh", ["-c", ed ? `${ed} "$1" >/dev/null 2>&1 &` : 'open -t "$1"', "sh", path]);
+      if (o.code !== 0) notify({ title: "Couldn't open the editor", body: (o.stderr || ed || "open -t").trim(), level: "error" });
+    });
+  }
+
+  closeDetails(cx) { this.selected = null; this.details = null; this.diff = null; this.zone = "graph"; this.handle.focus(); cx.notify(); }
+
+  // The diff beside the files follows the selected file (once the cursor rests).
+  syncDiff(cx) {
+    const commit = this.selected ? this.commits[this.index.get(this.selected)] : null, file = this.details?.files?.[this.fileAt ?? 0];
+    if (!commit || !file) return;
+    const want = `${commit.hash}\0${file.path}`;
+    if (this.diffWant === want) return;
+    this.diffWant = want;
+    cx.timer.after(90, (cx) => { if (this.diffWant === want && this.selected === commit.hash) { this.diffAt = 0; this.openDiff(commit, file, cx); } });
+  }
+
+  // Keys while reviewing: the file list keeps the keyboard and scrolls the diff beside it.
+  // j/k files, J/K commits, ⌃D/⌃U half pages of the diff, ] [ its hunks, g/G first/last file,
+  // h/←/⇥ back to the graph, - = size, x close.
+  zoneKey(e, cx) {
+    const k = e.keystroke, zone = this.zone ?? "graph";
+    if (!this.selected || zone !== "files") return false;
+    const files = this.details?.files ?? [], rows = this.diff?.rows ?? [];
+    const toFile = (i) => { if (!files.length) return; this.fileAt = Math.max(0, Math.min(files.length - 1, i)); this.fileScroll.scroll_to_item(this.fileAt); };
+    // The diff has no cursor: diffAt is the line kept in the middle of its view.
+    const page = Math.max(5, Math.floor((this.detailsHeight() - 40) / DIFF_ROW / 2));
+    const toLine = (i) => { if (!rows.length) return; this.diffAt = Math.max(0, Math.min(rows.length - 1, i)); this.diffScroll.scroll_to_item(this.diffAt, "center"); };
+    // From the top the middle line is about half a page down already.
+    const scroll = (d) => toLine(Math.max(page, this.diffAt ?? 0) + d * page);
+    const hunk = (d) => { for (let i = (this.diffAt ?? 0) + d; i >= 0 && i < rows.length; i += d) if (rows[i].kind === "@") return toLine(i); };
+    const commitStep = (d) => { this.moveTo(this.cursorIndex() + d, cx); this.fileAt = 0; this.fileScroll.scroll_to_item(0); };
+    const back = () => { this.zone = "graph"; };
+    const act = {
+      j: () => toFile(this.fileAt + 1), down: () => toFile(this.fileAt + 1), k: () => toFile(this.fileAt - 1), up: () => toFile(this.fileAt - 1),
+      g: () => toFile(0), "shift-g": () => toFile(files.length - 1),
+      "shift-j": () => commitStep(1), "shift-k": () => commitStep(-1),
+      "ctrl-d": () => scroll(1), pagedown: () => scroll(1), space: () => scroll(1),
+      "ctrl-u": () => scroll(-1), pageup: () => scroll(-1), "shift-space": () => scroll(-1),
+      "]": () => hunk(1), "[": () => hunk(-1),
+      h: back, left: back, tab: back, "shift-tab": back,
+      x: () => this.closeDetails(cx), o: () => this.openAtCommit(cx),
+      "-": () => this.setSplit(this.detailsHeight() - 3 * ROW, cx), "=": () => this.setSplit(this.detailsHeight() + 3 * ROW, cx),
+    };
+    const f = act[k];
+    if (!f) return false;
+    f(); cx.notify();
+    return true;
+  }
+
+  diffRow({ kind, number, text }, t, cursor = false) {
+    if (kind === "@") return div().w_full().px(12).h(DIFF_ROW).flex_none().truncate().bg(cursor ? t.selected : t.raised).text_color(t.dim).child(text);
     return h_flex().w_full().h(DIFF_ROW).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
+      .when(cursor, (e) => e.bg(t.selected))
       .child(div().w(34).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
       .child(div().flex_1().min_w(0).truncate().child(text));
   }
@@ -1173,6 +1322,7 @@ export class Graph {
       this.resolving = true;
       cx.timer.after(0, (cx) => { this.resolving = false; this.resolvePending(cx); });
     }
+    if (this.selected && this.details?.files?.length) this.syncDiff(cx);
     const t = theme(), mono = settings().font_family ?? "JetBrains Mono", ready = this.state === "ready";
     return v_flex().id("git-graph").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(12.5).track_focus(this.handle)
@@ -1181,6 +1331,8 @@ export class Graph {
       .on_hover((hovered, cx) => { if (!hovered) this.endDrag(cx); })
       .on_key_down((e, cx) => {
         const k = e.keystroke;
+        // The help panel: any key closes it.
+        if (this.help) { if (!/^(shift|ctrl|alt|cmd|platform|fn)$/.test(k)) { this.help = false; cx.notify(); } cx.stop_propagation(); return; }
         // The branch picker's field has the keyboard: ↑↓ move, ⇥ back (⏎ / ⇧⏎ arrive as its submit).
         if (this.bp) {
           const rows = this.bpRows(), move = (d) => { this.bp.at = Math.max(0, Math.min(rows.length - 1, this.bp.at + d)); this.bpScroll.scroll_to_item(this.bp.at); };
@@ -1200,9 +1352,12 @@ export class Graph {
           else return;
           cx.stop_propagation(); cx.notify(); return;
         }
+        if (this.state === "ready" && !this.picking && this.zoneKey(e, cx)) { cx.stop_propagation(); return; }
         if (this.state === "ready" && !this.picking) {
-          const act = { f: () => this.fetch(cx), "shift-f": () => this.syncAction("ff", cx), p: () => this.syncAction("push", cx),
-            c: () => this.syncAction("commit", cx), r: () => this.refresh(cx) }[e.keystroke];
+          // Lowercase reads (fetch, refresh); a change to branches takes Shift.
+          const act = { f: () => this.fetch(cx), "shift-f": () => this.syncAction("ff", cx), "shift-p": () => this.syncAction("push", cx),
+            "shift-c": () => this.syncAction("commit", cx), r: () => this.refresh(cx),
+            "?": () => { this.help = true; }, "shift-/": () => { this.help = true; } }[e.keystroke];
           if (act) { act(); cx.stop_propagation(); cx.notify(); return; }
           if (this.navKey(e, cx)) { cx.stop_propagation(); return; }
         }
@@ -1215,12 +1370,15 @@ export class Graph {
         const width = size.width / this.unit(), wide = width >= 600, graphMax = Math.max(60, Math.round(width * 0.4));
         this.width = width;
         if (wide !== this.wide || graphMax !== this.graphMax) { this.wide = wide; this.graphMax = graphMax; cx.notify(); }
+        const height = size.height / this.unit();
+        if (Math.abs(height - (this.height ?? 0)) > 1) { this.height = height; if (this.selected) this.keepCursorVisible(cx); cx.notify(); }
       })
       .child(this.header(t))
       .when(this.state === "workspace", (e) => e.child(this.workspaceList(t)))
       .when(Boolean(this.picking && this.workspace && this.opened), (e) => e.child(this.picker(t)))
-      .when(ready && Boolean(this.bp), (e) => e.child(this.branchPanel(t)))
-      .when(ready && !this.bp, (e) => e.child(this.toolbar(t)).child(this.columns(t, this.graphWidth())).child(this.list(t, mono))
+      .when(ready && Boolean(this.help), (e) => e.child(this.helpPanel(t)))
+      .when(ready && !this.help && Boolean(this.bp), (e) => e.child(this.branchPanel(t)))
+      .when(ready && !this.help && !this.bp, (e) => e.child(this.toolbar(t)).child(this.columns(t, this.graphWidth())).child(this.list(t, mono))
         .when(Boolean(this.selected), (el) => el.child(this.detailsPane(t, mono))))
       .when(!ready && this.state !== "workspace", (e) => e.child(this.empty(t)));
   }

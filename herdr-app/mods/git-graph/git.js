@@ -181,7 +181,7 @@ export function menuFor(target, ctx) {
         const tr = ctx.tracking?.[name];
         return tr && tr.behind > 0 && !tr.ahead && !tr.gone && item(`Fast-forward to ${tr.short}`, "fetch", { type: "ffBranch", name, upstream: tr.upstream, short: tr.short, current });
       })(),
-        current && ctx.tracking?.[name] && !ctx.tracking[name].gone && ctx.tracking[name].ahead > 0 && item(`Push to ${ctx.tracking[name].short}`, "push", { type: "pushCurrent", name }),
+        current && ctx.tracking?.[name] && !ctx.tracking[name].gone && ctx.tracking[name].ahead > 0 && item(`Push to ${ctx.tracking[name].short}…`, "push", { type: "pushCurrent", name, short: ctx.tracking[name].short }),
         ctx.remotes.length > 0 && item("Push branch…", "push", { type: "push", name })),
       section(item("Copy branch name", "copy", { type: "copy", text: name })),
     ];
@@ -285,6 +285,7 @@ export function dialogFor(action, ctx) {
       inputs: [{ id: "message", label: "Message", value: "", text: true }],
       // With changes already staged, commit just those unless the person ticks this.
       checks: [{ id: "all", label: "Stage every change first (untracked too)", value: !a.staged }], confirm: "Commit" };
+    case "pushCurrent": return { title: "Push", detail: `Push ${a.name} to ${a.short ?? "its upstream"}?`, confirm: "Push" };
     case "pull": return { title: "Pull", detail: `Fast-forward ${cur} to ${a.upstream}? A pull that can't fast-forward changes nothing.`, confirm: "Pull" };
     case "stash": return { title: "Stash uncommitted changes", inputs: [{ id: "message", label: "Message", value: "", optional: true }],
       checks: [{ id: "untracked", label: "Include untracked files", value: true }], confirm: "Stash" };
