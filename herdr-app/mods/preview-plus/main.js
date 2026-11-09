@@ -204,6 +204,8 @@ export default class PreviewPlus extends View {
   keyDown(event, cx) {
     const saveKey = window()?.platform === "macos" ? "cmd-s" : "ctrl-s";
     if (event.keystroke === saveKey && this.document) { cx.stop_propagation(); this.save(cx); }
+    // Escape works like the ← button (only shown in panel mode); it leaves the zoom field alone.
+    else if (event.keystroke === "escape" && this.selected && this.owner.mode !== "pane" && !this.zoomEditing) { cx.stop_propagation(); this.back(cx); }
   }
 
   remember() {
