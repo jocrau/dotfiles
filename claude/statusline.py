@@ -28,7 +28,7 @@ import time
 
 USAGE = os.path.expanduser("~/.local/state/claude-usage.json")
 BURN_FROM, BURN_HIGH = 150_000, 400_000  # tokens read per call: hint, then red
-BLUE, GREEN, YELLOW, RED, GRAY, RESET = "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[90m", "\033[0m"
+BLUE, GREEN, YELLOW, RED, GRAY, RESET = "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[38;5;245m", "\033[0m"
 
 
 def freshest(mine, saved):
