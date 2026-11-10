@@ -8,6 +8,10 @@ with effort (⚡ fast mode), context used as a bar (yellow from 60%, red
 from 80%), and subscription usage only when a window is at 80% or more
 (herdr-app's status bar shows it always).
 
+Inside herdr-app (HC_TERMINAL_SOCKET is set) the repository, worktree and
+branch name are left out: the space, tab and status bar show them. Only
+what they don't show stays: "uncommitted" and ↑ahead ↓behind.
+
 The burn hint `↻180k/call` shows, from 150k, how many tokens the last API
 call read: every call (each tool step of a turn) re-reads the whole
 context, so a large one uses the 5-hour and weekly limits fast, even when
@@ -108,20 +112,30 @@ def main():
 
     repo = (workspace.get("repo") or {}).get("name")
     git = git_state(cwd)
-    if git and not repo:  # no origin remote: the checkout's top folder
+    in_herdr = bool(os.environ.get("HC_TERMINAL_SOCKET"))
+    if in_herdr:
+        if git:
+            _, dirty, ahead, behind = git
+            sync = (f"↑{ahead}" if ahead else "") + (f"↓{behind}" if behind else "")
+            if dirty:
+                parts.append(f"{YELLOW}uncommitted{RESET}")
+            if sync:
+                parts.append(f"{GRAY}{sync}{RESET}")
+    elif git and not repo:  # no origin remote: the checkout's top folder
         top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
                              capture_output=True, text=True).stdout.strip()
         repo = os.path.basename(top) if top else ""
-    where = f"{BLUE}{repo or os.path.basename(cwd)}{RESET}"
-    if workspace.get("git_worktree"):
-        where += f" {GRAY}⎇{RESET} {BLUE}{workspace['git_worktree']}{RESET}"
-    parts.append(where)
+    if not in_herdr:
+        where = f"{BLUE}{repo or os.path.basename(cwd)}{RESET}"
+        if workspace.get("git_worktree"):
+            where += f" {GRAY}⎇{RESET} {BLUE}{workspace['git_worktree']}{RESET}"
+        parts.append(where)
 
-    if git:
-        branch, dirty, ahead, behind = git
-        text = f"{GREEN}{branch}{RESET}" + (f"{YELLOW}*{RESET}" if dirty else "")
-        sync = (f"↑{ahead}" if ahead else "") + (f"↓{behind}" if behind else "")
-        parts.append(text + (f" {GRAY}{sync}{RESET}" if sync else ""))
+        if git:
+            branch, dirty, ahead, behind = git
+            text = f"{GREEN}{branch}{RESET}" + (f"{YELLOW}*{RESET}" if dirty else "")
+            sync = (f"↑{ahead}" if ahead else "") + (f"↓{behind}" if behind else "")
+            parts.append(text + (f" {GRAY}{sync}{RESET}" if sync else ""))
 
     model = (data.get("model") or {}).get("display_name")
     if model:
