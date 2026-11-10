@@ -55,7 +55,7 @@ cat <<EOF
 
 Not linked (do once by hand on a new machine):
   - herdr-app:          curl -fsSL https://releases.herdr.dev/app/install.sh | sh  (also installs herdr-core, hc)
-  - herdr-layout:       git clone git@github.com:jocrau/herdr-layout.git "$(dirname "$REPO")/herdr-layout"  (the shared mods; before running this script)
+  - herdr-layout:       git clone git@github.com:jocrau/herdr-layout.git "$(dirname "$REPO")/herdr-layout"  (the shared mods and the Claude status line; before running this script)
   - agent-browser:      npm install -g agent-browser  (bin/agent-browser wraps it: one visible Chrome and login profile per repo)
   - Private shell setup: create ~/.zshrc.local (work paths, aliases) and ~/.zsh_secrets; neither is in this repo
   - Commit identity:    git -C "$REPO" config user.email <id>+<login>@users.noreply.github.com
