@@ -101,6 +101,7 @@ path_additions=(
     "$HOME/.wasmtime/bin"
     "$HOME/.local/bin"
     "$PNPM_HOME"
+    
 )
 
 # Add all paths
@@ -111,6 +112,11 @@ for new_path in "${path_additions[@]}"; do
     fi
 done
 export PATH
+
+# agent-fleet CLI: resolves the installed plugin version at call time, so plugin updates don't break it
+fleet() {
+    "$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))["plugins"]["agent-fleet@mm-plugin-marketplace"][0]["installPath"])')/scripts/fleet" "$@"
+}
 
 # ===== COMPILER FLAGS =====
 # LLVM
