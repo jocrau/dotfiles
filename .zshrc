@@ -113,11 +113,6 @@ for new_path in "${path_additions[@]}"; do
 done
 export PATH
 
-# agent-fleet CLI: resolves the installed plugin version at call time, so plugin updates don't break it
-fleet() {
-    "$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))["plugins"]["agent-fleet@mm-plugin-marketplace"][0]["installPath"])')/scripts/fleet" "$@"
-}
-
 # ===== COMPILER FLAGS =====
 # LLVM
 export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
