@@ -7,7 +7,7 @@ REPO=$(cd "$(dirname "$0")" && pwd)
 STAMP=$(date +%Y%m%d-%H%M%S)
 
 link() {
-  src=$REPO/$1
+  case $1 in /*) src=$1 ;; *) src=$REPO/$1 ;; esac
   dst=$2
   mkdir -p "$(dirname "$dst")"
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
@@ -24,7 +24,7 @@ link() {
 
 # herdr-app: only the files that are mine; the app writes the rest of
 # ~/.config/herdr-app itself (AGENTS.md, *.d.ts, view.json, shared.json, ...).
-for f in keys.json settings.json layouts/my-main.json; do
+for f in keys.json settings.json; do
   link "herdr-app/$f" "$HOME/.config/herdr-app/$f"
 done
 # Mods shared with others live in the herdr-layout repo (github.com/jocrau/herdr-layout),
@@ -40,6 +40,8 @@ for mod in "$REPO"/herdr-app/mods/*/ "$LAYOUT"/mods/*/; do
   ln -s "${mod%/}" "$dst"; echo "linked  $dst -> ${mod%/}"
 done
 [ -d "$LAYOUT/mods" ] || echo "missing $LAYOUT: clone github.com/jocrau/herdr-layout beside this repo (or set HERDR_LAYOUT)"
+# The layout is herdr-layout's too (switch to it once: herdr-app do layout.switch '{"name":"workbench"}').
+[ -f "$LAYOUT/layouts/workbench.json" ] && link "$LAYOUT/layouts/workbench.json" "$HOME/.config/herdr-app/layouts/workbench.json"
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
 [ -f "$LAYOUT/mods/beads/beads-view" ] && ln -sfn "$LAYOUT/mods/beads/beads-view" "$HOME/.local/bin/beads-view"  # beads-view on PATH too
