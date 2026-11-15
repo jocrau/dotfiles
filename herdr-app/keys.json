@@ -68,7 +68,9 @@
     "cmd-o": "mod.open:file-browser",
     "cmd-g": "mod.open:git-graph",
     "cmd-shift-o": "layout.toggle:panel",
-    "cmd-shift-b": "layout.toggle:sidebar"
+    "cmd-shift-b": "layout.toggle:sidebar",
+    "cmd-shift-f": "layout.toggle:fleet",
+    "cmd-alt-f": "mod.open:fleet-board"
   },
   "terminal": {
     "cmd-f": "terminal.search",

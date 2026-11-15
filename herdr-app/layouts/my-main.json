@@ -109,13 +109,12 @@
                     "width": 1,
                     "color": "border"
                   },
-                  "radius": 0,
-                  "gap": 0,
-                  "lone": false,
                   "focus": {
                     "width": 1,
                     "color": "#268bd2"
-                  }
+                  },
+                  "radius": 0,
+                  "gap": 0
                 }
               }
             },
@@ -168,6 +167,18 @@
         }
       ],
       "resizable": false
+    },
+    {
+      "id": "fleet",
+      "type": "block",
+      "content": {
+        "mod": "fleet-board"
+      },
+      "size": {
+        "px": 400
+      },
+      "min": 320,
+      "max": 720
     }
   ],
   "background": "canvas",
