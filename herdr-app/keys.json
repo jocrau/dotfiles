@@ -81,5 +81,9 @@
     "alt-right": "send:\u001bf",
     "alt-backspace": "send:\u0017",
     "cmd-backspace": "send:\u0015"
+  },
+  "mod:fleet-board": {
+    "cmd-left": "fleet-board.prev-run",
+    "cmd-right": "fleet-board.next-run"
   }
 }
