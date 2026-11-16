@@ -42,6 +42,20 @@ done
 [ -d "$LAYOUT/mods" ] || echo "missing $LAYOUT: clone github.com/jocrau/herdr-layout beside this repo (or set HERDR_LAYOUT)"
 # The layout is herdr-layout's too (switch to it once: herdr-app do layout.switch '{"name":"workbench"}').
 [ -f "$LAYOUT/layouts/workbench.json" ] && link "$LAYOUT/layouts/workbench.json" "$HOME/.config/herdr-app/layouts/workbench.json"
+# herdr-layout's keys.json is what others merge into theirs; this repo's keys.json is what runs here.
+# Each of the layout's bindings should be in it as-is: say which aren't (nothing is changed).
+if [ -f "$LAYOUT/keys.json" ]; then
+  /usr/bin/python3 -I - "$LAYOUT/keys.json" "$REPO/herdr-app/keys.json" <<'PY' || true
+import json, sys
+layout, mine = (json.load(open(p)) for p in sys.argv[1:3])
+diff = [(ctx, key, cmd, mine.get(ctx, {}).get(key)) for ctx, binds in layout.items() for key, cmd in binds.items()
+        if mine.get(ctx, {}).get(key) != cmd]
+for ctx, key, cmd, have in diff:
+    print(f"warning keys.json [{ctx}] {key}: herdr-layout binds {cmd}, here {have or 'nothing'}")
+if diff:
+    print("        copy them into herdr-app/keys.json (or change herdr-layout's) to keep the two alike")
+PY
+fi
 link ghostty/config.ghostty "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 link beads-view/config.json "$HOME/.config/beads-view/config.json"
 [ -f "$LAYOUT/mods/beads/beads-view" ] && ln -sfn "$LAYOUT/mods/beads/beads-view" "$HOME/.local/bin/beads-view"  # beads-view on PATH too
