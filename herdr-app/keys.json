@@ -34,7 +34,7 @@
     "shift-f2": "space.rename",
     "cmd-/": "app.help",
     "cmd-shift-/": "app.help",
-    "cmd-b": "mod.open:beads",
+    "cmd-b": "layout.toggle:sidebar",
     "cmd-=": "app.zoom_in",
     "cmd-+": "app.zoom_in",
     "cmd--": "app.zoom_out",
@@ -65,14 +65,14 @@
     "cmd-shift-up": "agent.prev",
     "cmd-shift-down": "agent.next",
     "cmd-k": "mod.open:picker",
-    "cmd-o": "mod.open:file-browser",
-    "cmd-g": "mod.open:git-graph",
-    "cmd-shift-o": "layout.toggle:panel",
-    "cmd-shift-b": "layout.toggle:sidebar",
+    "cmd-shift-o": "mod.open:file-browser",
+    "cmd-shift-b": "mod.open:beads",
     "cmd-shift-f": "layout.toggle:fleet",
     "cmd-alt-f": "mod.open:fleet-board",
     "cmd-shift-r": "layout.toggle:prs",
-    "cmd-alt-r": "mod.open:pr-board"
+    "cmd-alt-r": "mod.open:pr-board",
+    "cmd-alt-o": "layout.toggle:panel",
+    "cmd-shift-g": "mod.open:git-graph"
   },
   "terminal": {
     "cmd-f": "terminal.search",
