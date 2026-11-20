@@ -8,6 +8,7 @@
     "ctrl-tab": "tab.next",
     "ctrl-shift-tab": "tab.prev",
     "alt-tab": "mod.open:recent-panes",
+    "cmd-.": "mod.open:zen",
     "cmd-shift-]": "tab.next",
     "cmd-shift-[": "tab.prev",
     "cmd-alt-]": "space.next",
