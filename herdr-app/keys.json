@@ -69,9 +69,9 @@
     "cmd-k": "mod.open:picker",
     "cmd-shift-o": "mod.open:file-browser",
     "cmd-shift-b": "mod.open:beads",
-    "cmd-shift-f": "layout.toggle:fleet",
+    "cmd-shift-f": "tabs-graph.summon-fleet",
     "cmd-alt-f": "mod.open:fleet-board",
-    "cmd-shift-r": "layout.toggle:prs",
+    "cmd-shift-r": "tabs-graph.summon-prs",
     "cmd-alt-r": "mod.open:pr-board",
     "cmd-alt-o": "layout.toggle:panel",
     "cmd-shift-g": "mod.open:git-graph"
