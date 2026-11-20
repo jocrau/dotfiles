@@ -69,9 +69,9 @@
     "cmd-k": "mod.open:picker",
     "cmd-shift-o": "mod.open:file-browser",
     "cmd-shift-b": "mod.open:beads",
-    "cmd-shift-f": "tabs-graph.summon-fleet",
+    "cmd-shift-f": "mod.open:summon-fleet",
     "cmd-alt-f": "mod.open:fleet-board",
-    "cmd-shift-r": "tabs-graph.summon-prs",
+    "cmd-shift-r": "mod.open:summon-prs",
     "cmd-alt-r": "mod.open:pr-board",
     "cmd-alt-o": "layout.toggle:panel",
     "cmd-shift-g": "mod.open:git-graph"
@@ -86,7 +86,11 @@
     "alt-backspace": "send:\u0017",
     "cmd-backspace": "send:\u0015"
   },
+  "mod:pr-board": {
+    "cmd-shift-r": "layout.hide:prs"
+  },
   "mod:fleet-board": {
+    "cmd-shift-f": "layout.hide:fleet",
     "cmd-left": "fleet-board.prev-run",
     "cmd-right": "fleet-board.next-run"
   },
