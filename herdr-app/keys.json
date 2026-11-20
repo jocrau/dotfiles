@@ -87,12 +87,14 @@
     "cmd-backspace": "send:\u0015"
   },
   "mod:pr-board": {
-    "cmd-shift-r": "layout.hide:prs"
+    "cmd-shift-r": "layout.hide:prs",
+    "cmd-alt-left": "pr-board.leave"
   },
   "mod:fleet-board": {
     "cmd-shift-f": "layout.hide:fleet",
     "cmd-left": "fleet-board.prev-run",
-    "cmd-right": "fleet-board.next-run"
+    "cmd-right": "fleet-board.next-run",
+    "cmd-alt-left": "fleet-board.leave"
   },
   "mod:recent-panes": {
     "alt-tab": "recent-panes.next",
@@ -101,5 +103,8 @@
   "mod:git-graph": {
     "cmd-up": "git-graph.prev-pr",
     "cmd-down": "git-graph.next-pr"
+  },
+  "mod:file-browser": {
+    "cmd-alt-left": "file-browser.leave"
   }
 }
