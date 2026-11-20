@@ -87,11 +87,11 @@
     "cmd-backspace": "send:\u0015"
   },
   "mod:pr-board": {
-    "cmd-shift-r": "layout.hide:prs",
+    "cmd-shift-r": "pr-board.hide",
     "cmd-alt-left": "pr-board.leave"
   },
   "mod:fleet-board": {
-    "cmd-shift-f": "layout.hide:fleet",
+    "cmd-shift-f": "fleet-board.hide",
     "cmd-left": "fleet-board.prev-run",
     "cmd-right": "fleet-board.next-run",
     "cmd-alt-left": "fleet-board.leave"
