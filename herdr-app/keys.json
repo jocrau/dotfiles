@@ -7,6 +7,7 @@
     "cmd-w": "tab.close",
     "ctrl-tab": "tab.next",
     "ctrl-shift-tab": "tab.prev",
+    "alt-tab": "mod.open:recent-panes",
     "cmd-shift-]": "tab.next",
     "cmd-shift-[": "tab.prev",
     "cmd-alt-]": "space.next",
@@ -87,6 +88,10 @@
   "mod:fleet-board": {
     "cmd-left": "fleet-board.prev-run",
     "cmd-right": "fleet-board.next-run"
+  },
+  "mod:recent-panes": {
+    "alt-tab": "recent-panes.next",
+    "alt-shift-tab": "recent-panes.prev"
   },
   "mod:git-graph": {
     "cmd-up": "git-graph.prev-pr",
