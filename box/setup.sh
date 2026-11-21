@@ -119,18 +119,18 @@ elif [ $GH = 0 ]; then todo "plugins wait for gh auth login"
 else
   have=$(claude plugin marketplace list 2>/dev/null || true)
   for m in $MARKETPLACES; do
-    if printf '%s' "$have" | grep -qF "$m"; then ok "marketplace $m"; else claude plugin marketplace add "$m" >/dev/null && did "marketplace $m"; fi
+    if printf '%s' "$have" | grep -qF "$m"; then ok "marketplace $m"; else quiet claude plugin marketplace add "$m"; did "marketplace $m"; fi
   done
   installed=$(cat "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null || true)
   for p in $PLUGINS; do
-    if printf '%s' "$installed" | grep -qF "\"$p\""; then ok "plugin $p"; else claude plugin install "$p" >/dev/null && did "plugin $p"; fi
+    if printf '%s' "$installed" | grep -qF "\"$p\""; then ok "plugin $p"; else quiet claude plugin install "$p"; did "plugin $p"; fi
   done
 fi
 
 step "The fleet's command (fleet install-cli: ~/.local/bin/fleet)"
 FLEET_SCRIPT=$(ls -d "$HOME"/.claude/plugins/cache/*/agent-fleet/*/scripts/fleet 2>/dev/null | sort -V | tail -1 || true)
 if command -v fleet >/dev/null 2>&1; then ok "fleet ($(fleet --version 2>/dev/null | head -1))"
-elif [ -n "$FLEET_SCRIPT" ]; then "$FLEET_SCRIPT" install-cli >/dev/null && did "fleet"
+elif [ -n "$FLEET_SCRIPT" ]; then quiet "$FLEET_SCRIPT" install-cli; did "fleet"
 else ok "no agent-fleet plugin installed: nothing to do"; fi
 
 step "Repositories in $CODE (from $CONF)"
@@ -140,7 +140,7 @@ elif [ $GH = 0 ]; then todo "repositories wait for gh auth login"
 else
   for r in $REPOS; do
     d="$CODE/${r##*/}"
-    if [ -d "$d/.git" ]; then ok "$r"; else gh repo clone "$r" "$d" -- --quiet && did "$r"; fi
+    if [ -d "$d/.git" ]; then ok "$r"; else quiet gh repo clone "$r" "$d" -- --quiet; did "$r"; fi
   done
 fi
 
