@@ -7,6 +7,23 @@ This repository is public. Secrets and work-specific values never go in it: they
 it that aren't version controlled (see [Private files](#private-files)), and a pre-commit hook scans every
 commit for secrets.
 
+## Using this as a starting point
+
+You're welcome to build your own setup from this one. A few things to know first:
+
+- **Fork it rather than use it as is.** It's mine: my key bindings and Herdr settings, and a `.zshrc` that
+  loads work tools (AWS, kubectl, Terraform) you may not need. In a fork you change what you like and can
+  still pull in later improvements from here.
+- **Follow [Laptop](#laptop) and skip [Agent box](#agent-box)**, which is for running agents on a separate
+  machine. Claude Code can follow the steps for you: start it in an empty folder and ask it to set up the
+  Mac from the Laptop section of your fork's README, asking before each install.
+- **Bring your own accounts**: GitHub, and a Claude plan for Claude Code. Nothing here signs you in to
+  anything.
+- **Two of the Herdr boards need tools that aren't public**: the fleet board (agent-fleet) and the PR board
+  (pr-flow). Without them those boards just don't appear; everything else in
+  [herdr-layout](https://github.com/jocrau/herdr-layout) works. Its README lists what each part needs.
+- **Ideas and fixes for the layout** are welcome as issues or pull requests on herdr-layout.
+
 ## Laptop
 
 On a new Mac, in this order:
@@ -36,7 +53,7 @@ On a new Mac, in this order:
    ```sh
    mkdir -p ~/Code && cd ~/Code
    git clone https://github.com/jocrau/dotfiles.git
-   git clone git@github.com:jocrau/herdr-layout.git
+   git clone https://github.com/jocrau/herdr-layout.git
    ```
 
 4. **The shell**: `.zshrc` is linked by hand (install.sh leaves it alone)
@@ -70,7 +87,7 @@ On a new Mac, in this order:
      `"statusLine": { "type": "command", "command": "sh ~/.claude/statusline-command.sh" }`.
    - The Herdr layout: `herdr-app do layout.switch '{"name":"workbench"}'` once.
    - agent-browser: `npm install -g agent-browser` (`bin/agent-browser` wraps it: one visible Chrome and
-     login profile per repository; it expects the global install under nvm's Node, see the file).
+     login profile per repository; it finds the real one on PATH or under nvm, or `AGENT_BROWSER_BIN`).
    - Commit identity for this repository: `git -C ~/Code/dotfiles config user.email <id>+<login>@users.noreply.github.com`.
    - The private files below.
    - Reload Ghostty: `kill -USR2 $(pgrep -x ghostty)`; Herdr reloads its files itself.

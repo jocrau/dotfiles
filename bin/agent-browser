@@ -2,7 +2,23 @@
 # agent-browser with per-repo defaults, so no repo needs its own config:
 # one visible Chrome per git repo (session = repo folder name), each with its
 # own persistent profile so a login sticks. Anything already set wins.
-REAL="$HOME/.nvm/versions/node/v24.2.0/bin/agent-browser"
+# The real agent-browser: AGENT_BROWSER_BIN, else the first on PATH that isn't this wrapper, else the newest
+# global install under nvm (nvm loads lazily, so its bin may not be on PATH yet).
+self=$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")
+REAL=${AGENT_BROWSER_BIN:-}
+if [ -z "$REAL" ]; then
+  IFS=:
+  for d in $PATH; do
+    c="$d/agent-browser"
+    [ -x "$c" ] || continue
+    [ "$(cd "$(dirname "$c")" && pwd -P)/agent-browser" = "$self" ] && continue
+    [ "$(readlink "$c" 2>/dev/null)" = "$self" ] && continue
+    REAL=$c; break
+  done
+  unset IFS
+fi
+[ -n "$REAL" ] || REAL=$(ls -d "$HOME"/.nvm/versions/node/*/bin/agent-browser 2>/dev/null | sort -V | tail -1)
+[ -n "$REAL" ] || { echo "agent-browser: not installed (npm install -g agent-browser)" >&2; exit 127; }
 
 if [ -z "$AGENT_BROWSER_SESSION" ]; then
   top=$(git rev-parse --show-toplevel 2>/dev/null)
