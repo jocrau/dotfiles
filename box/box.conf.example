@@ -1,0 +1,12 @@
+# Private values for box/setup.sh: copy to ~/.config/agent-box/box.conf on the box and fill in.
+# Not in the repo (it names work repositories); no tokens here either (logins are done by hand).
+
+GIT_NAME="Your Name"
+GIT_EMAIL="1234567+you@users.noreply.github.com"
+
+# Claude Code plugin marketplaces (GitHub owner/repo or URL) and plugins (name@marketplace), space-separated.
+MARKETPLACES="your-org/your-plugin-marketplace"
+PLUGINS="agent-fleet@your-plugin-marketplace pr-flow@your-plugin-marketplace"
+
+# Repositories to clone into ~/Code (owner/repo), space-separated.
+REPOS="your-org/service-a your-org/service-b"
